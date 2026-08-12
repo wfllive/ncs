@@ -78,6 +78,12 @@ const assertions = [
   [gradle.includes('compileSdk = 37'), 'compileSdk 37'],
   [gradle.includes('minSdk = 24'), 'minSdk 24 (Android 7.0)'],
   [gradle.includes('targetSdk = 37'), 'targetSdk 37 (Android 17)'],
+  // Kotlin DSL third arg must be one expression that evaluates to a quoted
+  // Java literal. The old JS-template form emitted ""$expectedSha256"" and
+  // Gradle failed with "Expecting ')'" / "Unexpected tokens" on line 25.
+  [gradle.includes('buildConfigField("String", "EXPECTED_SIGNATURE_SHA256", \'"\' + expectedSha256 + \'"\')'), 'buildConfigField SHA256 is valid Kotlin DSL'],
+  [!/EXPECTED_SIGNATURE_SHA256", ""\$/.test(gradle), 'buildConfigField SHA256 is not the broken ""$expectedSha256"" form'],
+  [files['android/gradle.properties'].includes('android.sync.suppressAgpWarnings=UNSUPPORTED_PROJECT_OPTION_USE'), 'gradle.properties suppresses experimental aapt2 override warning'],
   [!files['android/app/src/main/res/drawable/ic_launcher.xml'].includes('<adaptive-icon'), 'API 24–25 launcher icon is an ordinary drawable'],
   [files['android/app/src/main/res/drawable-anydpi-v26/ic_launcher.xml'].includes('<adaptive-icon'), 'API 26+ launcher icon uses the qualified adaptive drawable'],
   [/android:name="\.MainActivity"/.test(manifest), 'манифест: .MainActivity (резидится относительно namespace)'],
