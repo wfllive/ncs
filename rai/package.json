@@ -1,0 +1,35 @@
+{
+  "name": "rai",
+  "version": "0.0.1",
+  "description": "Rapid Android on ARM — сборка Android-приложений на устройстве (arm64-v8a)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "src/index.js",
+  "bin": {
+    "rai": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "build": "node scripts/build.js debug && node scripts/build.js release",
+    "build:debug": "node scripts/build.js debug",
+    "build:release": "node scripts/build.js release",
+    "clean": "rm -rf build"
+  },
+  "keywords": [
+    "android",
+    "arm64",
+    "termux",
+    "proot",
+    "gradle",
+    "apk"
+  ],
+  "dependencies": {},
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wfllive-official/rai"
+  },
+  "author": "wfllive-official"
+}

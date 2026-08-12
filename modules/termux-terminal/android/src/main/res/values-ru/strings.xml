@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="copy_text">Копировать</string>
+    <string name="paste_text">Вставить</string>
+    <string name="text_selection_more">Ещё</string>
+    <string name="text_selection_select_all">Выбрать всё</string>
+</resources>

@@ -1,0 +1,43 @@
+RAI — Rapid Android on ARM
+Copyright (c) 2026 wfllive-official
+Лицензия: MIT (см. LICENSE)
+
+===============================================================================
+СТОРОННИЕ КОМПОНЕНТЫ
+===============================================================================
+
+RAI не содержит чужого кода: зависимостей npm нет, весь исходный код —
+собственный. Перечисленное ниже RAI СКАЧИВАЕТ во время работы,
+но не распространяет в своём составе.
+
+-------------------------------------------------------------------------------
+1. Android SDK Custom — нативные ARM-сборки инструментов Android SDK
+   https://github.com/HomuHomu833/android-sdk-custom
+   Лицензия: MIT
+   Собрано из исходников AOSP (Apache License 2.0).
+
+2. Android SDK Platforms (android.jar) — Google
+   https://dl.google.com/android/repository/
+   Лицензия: Android Software Development Kit License Agreement
+   Принимается пользователем при установке.
+
+3. Gradle
+   https://services.gradle.org/distributions/
+   Лицензия: Apache License 2.0
+
+4. Ubuntu Base
+   https://cdimage.ubuntu.com/ubuntu-base/releases/
+   Лицензии пакетов: GPL, LGPL, MIT, BSD и другие (см. состав образа)
+
+5. Termux packages (при работе в Termux)
+   https://packages.termux.dev/
+   Лицензии: соответствуют лицензиям исходных проектов
+
+-------------------------------------------------------------------------------
+Список источников загрузки открыт и проверяем командой:
+
+    rai sources
+
+Он же зафиксирован в src/shell/lib/sources.sh — изменение файла
+меняет отпечаток сборки и видно через `rai verify`.
+===============================================================================

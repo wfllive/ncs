@@ -1,0 +1,67 @@
+buildscript {
+  repositories {
+    mavenCentral()
+  }
+  dependencies {
+    // This is the exact Expo native-module pattern. `kotlinVersion` is
+    // provided by Expo's module Gradle plugin, so the Compose compiler always
+    // matches the Kotlin compiler used for this development build.
+    classpath("org.jetbrains.kotlin.plugin.compose:org.jetbrains.kotlin.plugin.compose.gradle.plugin:${kotlinVersion}")
+  }
+}
+
+plugins {
+  id 'com.android.library'
+  id 'org.jetbrains.kotlin.android'
+}
+
+apply plugin: 'org.jetbrains.kotlin.plugin.compose'
+
+android {
+  namespace "expo.modules.aptmanager"
+  compileSdkVersion 36
+
+  defaultConfig {
+    minSdkVersion 24
+    targetSdkVersion 36
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = '17'
+  }
+
+  buildFeatures {
+    compose true
+  }
+
+  // The preview is rendered by a real ComposeView inside the IDE module.
+  // Kotlin 2.x configures its compiler via org.jetbrains.kotlin.plugin.compose.
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation project(':termux-terminal')
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
+  implementation "androidx.core:core-ktx:1.17.0"
+  implementation "androidx.appcompat:appcompat:1.7.0"
+  implementation "androidx.cardview:cardview:1.0.0"
+  implementation "com.google.android.material:material:1.12.0"
+
+  // Compose runtime for the IDE's live, Material 3-accurate preview.
+  implementation platform("androidx.compose:compose-bom:2024.12.01")
+  implementation "androidx.compose.ui:ui"
+  implementation "androidx.compose.material3:material3"
+  implementation "androidx.compose.material:material-icons-extended"
+  implementation "androidx.activity:activity-compose:1.10.0"
+
+  // XZ decompression for .tar.xz files in .deb packages
+  implementation "org.tukaani:xz:1.9"
+
+  // tar.gz extraction for proot Linux rootfs images
+  implementation "org.apache.commons:commons-compress:1.26.1"
+}

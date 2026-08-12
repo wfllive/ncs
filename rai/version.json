@@ -1,0 +1,9 @@
+{
+  "version": "0.0.1",
+  "published": "2026-08-09",
+  "file": "rai.sh",
+  "sha256": "f6f0876e8b9cbba1ed891662c11c63510e49897de20ce4cd7590265c80ba08c7",
+  "minNode": 18,
+  "notes": ["первый запуск — вендоренный в Compose Studio"],
+  "critical": false
+}

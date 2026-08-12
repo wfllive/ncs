@@ -1,0 +1,80 @@
+{
+  "expo": {
+    "name": "NovaCompose Studio",
+    "slug": "novacompose-studio",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#F4F6FA",
+    "primaryColor": "#4F46E5",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ru.wfllive.nova"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundColor": "#4F46E5",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "package": "ru.wfllive.nova",
+      "softwareKeyboardLayoutMode": "resize",
+      "permissions": [
+        "android.permission.MANAGE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+        "android.permission.WAKE_LOCK",
+        "android.permission.REQUEST_INSTALL_PACKAGES",
+        "android.permission.ACCESS_NETWORK_STATE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "157b409e-70e3-4556-bd69-d31574d62bff"
+      }
+    },
+    "plugins": [
+      "./plugins/with-security-guard.js",
+      "./plugins/with-extract-native-libs.js",
+      "./plugins/with-rai-bundle.js",
+      "./plugins/with-cleartext-preview.js",
+      [
+        "expo-status-bar",
+        {
+          "hidden": false,
+          "style": "dark"
+        }
+      ],
+      [
+        "expo-navigation-bar",
+        {
+          "enforceContrast": false,
+          "hidden": false,
+          "style": "dark"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0B1020",
+          "image": "./assets/icon.png",
+          "imageWidth": 160,
+          "resizeMode": "contain",
+          "dark": {
+            "backgroundColor": "#070B12",
+            "image": "./assets/icon.png"
+          }
+        }
+      ]
+    ]
+  }
+}

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="color-scheme" content="dark light" />
+<style>
+  html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background: #1E1E1E;
+    overflow: hidden;
+    /* Android WebView must not auto-scale text: the editor controls font size
+       itself, otherwise the gutter and the code would misalign. */
+    -webkit-text-size-adjust: none;
+    text-size-adjust: none;
+  }
+  #editor { height: 100%; width: 100%; }
+  .cm-editor { height: 100%; }
+  .cm-editor * { -webkit-tap-highlight-color: transparent; }
+  .cm-scroller { -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+  ::selection { background: #264F78; }
+  .cm-scroller::-webkit-scrollbar { width: 10px; height: 10px; }
+  .cm-scroller::-webkit-scrollbar-thumb { background: rgba(121,121,121,0.4); border-radius: 5px; }
+  .cm-scroller::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+<div id="editor"></div>
+<script>
+//__EDITOR_BUNDLE__
+</script>
+</body>
+</html>
