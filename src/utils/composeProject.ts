@@ -333,6 +333,7 @@ include(":app")
 `,
     'android/gradle.properties': `# Gradle settings (arm64, rai modern profile: AGP 9.3.1 / Kotlin 2.4.10)
 android.aapt2FromMavenOverride=
+android.sync.suppressAgpWarnings=UNSUPPORTED_PROJECT_OPTION_USE
 org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8
 org.gradle.daemon=false
 org.gradle.parallel=false
@@ -359,6 +360,9 @@ zipStorePath=wrapper/dists
 `,
     'android/local.properties': `sdk.dir=\${HOME}/android-sdk
 `,
+    // Quote SHA256 with Kotlin Char concat ('"' + value + '"').
+    // JS template literals eat \", so the previous escape produced invalid
+    // Kotlin (""$expectedSha256"") and Gradle failed with "Expecting ')'".
     'android/app/build.gradle.kts': `import java.util.Properties
 
 plugins {
@@ -383,7 +387,7 @@ android {
         targetSdk = 37
         versionCode = ${project.versionCode || 1}
         versionName = "${project.versionName || "1.0.0"}"
-        buildConfigField("String", "EXPECTED_SIGNATURE_SHA256", "\"$expectedSha256\"")
+        buildConfigField("String", "EXPECTED_SIGNATURE_SHA256", '"' + expectedSha256 + '"')
         // arm64-v8a only
         ndk { abiFilters.clear(); abiFilters += "arm64-v8a" }
     }
