@@ -1,0 +1,94 @@
+name: Unzip to Repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_file:
+        description: 'Путь к ZIP-файлу (например: archive.zip)'
+        required: true
+        default: 'archive.zip'
+      target_folder:
+        description: 'Папка назначения (пусто = корень репозитория)'
+        required: false
+        default: ''
+      commit_message:
+        description: 'Сообщение коммита'
+        required: false
+        default: 'Распаковка ZIP в репозиторий'
+
+# ✅ ВАЖНО: Даём права на запись
+permissions:
+  contents: write
+
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install unzip
+        run: sudo apt-get update && sudo apt-get install -y unzip
+
+      - name: Проверка ZIP файла
+        run: |
+          if [ ! -f "${{ inputs.zip_file }}" ]; then
+            echo "❌ Файл ${{ inputs.zip_file }} не найден!"
+            echo "📂 Файлы в репозитории:"
+            ls -la
+            exit 1
+          else
+            echo "✅ Файл найден: ${{ inputs.zip_file }}"
+            echo "📦 Содержимое ZIP:"
+            unzip -l "${{ inputs.zip_file }}"
+          fi
+
+      - name: Распаковка ZIP
+        run: |
+          if [ -z "${{ inputs.target_folder }}" ]; then
+            echo "📂 Распаковываем в корень репозитория..."
+            unzip -o "${{ inputs.zip_file }}"
+          else
+            echo "📂 Распаковываем в папку: ${{ inputs.target_folder }}"
+            mkdir -p "${{ inputs.target_folder }}"
+            unzip -o "${{ inputs.zip_file }}" -d "${{ inputs.target_folder }}"
+          fi
+
+      - name: Настройка Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Проверка изменений
+        id: check_changes
+        run: |
+          git add .
+          if git diff --staged --quiet; then
+            echo "⚠️ Нет новых изменений для коммита"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Найдены изменения"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "📋 Изменённые файлы:"
+            git diff --staged --name-only
+          fi
+
+      - name: Commit и Push
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          git commit -m "${{ inputs.commit_message }}"
+          git push origin ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Результат
+        run: |
+          if [ "${{ steps.check_changes.outputs.has_changes }}" == "true" ]; then
+            echo "✅ Файлы успешно распакованы и запушены!"
+          else
+            echo "⚠️ Файлы уже актуальны, ничего не изменилось"
+          fi
