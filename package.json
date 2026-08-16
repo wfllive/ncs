@@ -39,6 +39,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "pr": "npx expo prebuild --platform android",
+    "bv": "bash scripts/bump-version.sh",
     "bd": "EAS_SKIP_AUTO_FINGERPRINT=1 eas build --platform android --profile development",
     "bdg": "node scripts/bdg.js",
     "proot": "bash scripts/build-proot-termux-fix.sh",
