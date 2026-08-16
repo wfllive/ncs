@@ -1282,22 +1282,29 @@ class AptManagerModule : Module() {
             }
         }
 
+        // RuStore: REQUEST_INSTALL_PACKAGES удалён, поэтому прямая установка APK
+        // из приложения невозможна. canInstallApks всегда false, installApk
+        // экспортирует путь и пробует открыть через FileProvider; если система
+        // блокирует установку — возвращается инструкция для ручной установки.
         AsyncFunction("canInstallApks") Coroutine { ->
-            val context = appContext.reactContext!!
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                context.packageManager.canRequestPackageInstalls()
-            } else true
+            // Для RuStore-сборки возвращаем false — кнопка в UI покажет
+            // альтернативный флоу (поделиться / открыть в файловом менеджере).
+            // Проверка canRequestPackageInstalls без разрешения всегда false.
+            try {
+                val context = appContext.reactContext!!
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    // Если разрешение не объявлено, этот вызов всё равно вернёт false
+                    context.packageManager.canRequestPackageInstalls()
+                } else false
+            } catch (_: Exception) { false }
         }
 
         AsyncFunction("installApk") Coroutine { linuxPath: String ->
             withContext(Dispatchers.Main) {
                 val context = appContext.reactContext!!
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
-                    val settingsIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(settingsIntent)
-                    return@withContext mapOf("success" to false, "output" to "Allow APK installation for NovaCompose Studio, then press Install again.")
-                }
+                // RuStore: не открываем Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                // т.к. без REQUEST_INSTALL_PACKAGES система всё равно не разрешит установку
+                // и модерация RuStore требует отсутствия этого флоу.
                 // rai runs inside the Termux bootstrap (the apt-manager shell),
                 // so its projects land in /data/data/<pkg>/files/home/projects/...
                 // (Termux HOME) — not inside the proot Ubuntu rootfs. The
@@ -1329,13 +1336,30 @@ class AptManagerModule : Module() {
                 try {
                     val authority = "${context.packageName}.aptmanager.fileprovider"
                     val uri = FileProvider.getUriForFile(context, authority, file)
-                    val intent = Intent(Intent.ACTION_VIEW)
+                    // Пытаемся открыть APK. На RuStore-сборке без REQUEST_INSTALL_PACKAGES
+                    // система может отклонить интент — ловим и возвращаем инструкцию.
+                    val viewIntent = Intent(Intent.ACTION_VIEW)
                         .setDataAndType(uri, "application/vnd.android.package-archive")
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    context.startActivity(intent)
-                    mapOf("success" to true, "output" to file.absolutePath)
+                    // Для RuStore предпочтительнее «Поделиться»/открыть папку, но пробуем VIEW
+                    // — на некоторых устройствах файловый менеджер всё равно предложит установку.
+                    // Если есть chooser — используем его, иначе прямой старт.
+                    try {
+                        val chooser = Intent.createChooser(viewIntent, "Открыть APK")
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        context.startActivity(chooser)
+                    } catch (_: Exception) {
+                        context.startActivity(viewIntent)
+                    }
+                    mapOf("success" to true, "output" to file.absolutePath, "shared" to true)
                 } catch (e: Exception) {
-                    mapOf("success" to false, "output" to (e.message ?: e.toString()))
+                    val msg = e.message ?: e.toString()
+                    val isPermissionDenied = msg.contains("REQUEST_INSTALL_PACKAGES", ignoreCase = true)
+                            || msg.contains("Permission Denial", ignoreCase = true)
+                    val friendly = if (isPermissionDenied) {
+                        "Прямая установка APK отключена для RuStore (требуется REQUEST_INSTALL_PACKAGES). APK сохранён: ${file.absolutePath}. Откройте файл через системный файловый менеджер в папке Загрузки/NovaCompose или используйте кнопку «Поделиться»."
+                    } else msg
+                    mapOf("success" to false, "output" to friendly, "path" to file.absolutePath, "needManualInstall" to isPermissionDenied)
                 }
             }
         }

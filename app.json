@@ -29,7 +29,6 @@
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
         "android.permission.WAKE_LOCK",
-        "android.permission.REQUEST_INSTALL_PACKAGES",
         "android.permission.ACCESS_NETWORK_STATE"
       ]
     },
@@ -43,6 +42,7 @@
       }
     },
     "plugins": [
+      "./plugins/with-remove-install-permission.js",
       "./plugins/with-security-guard.js",
       "./plugins/with-extract-native-libs.js",
       "./plugins/with-rai-bundle.js",

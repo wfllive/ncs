@@ -310,10 +310,10 @@ const BuildScreen = ({ navigation }) => {
   };
 
   const installDebug = async () => {
-    // Используем реальный путь к APK из артефакта, а не зашитый.
+    // RuStore: REQUEST_INSTALL_PACKAGES удалён, поэтому прямая установка
+    // из приложения невозможна. Пробуем apt.installApk (откроет chooser),
+    // при ошибке — предлагаем «Поделиться» и показываем путь в Загрузки.
     const path = artifact && artifact.endsWith('.apk') ? artifact : `${getProjectDir(currentProject)}/android/app/build/outputs/apk/debug/app-debug.apk`;
-    // Проверяем, что файл реально существует и непустой — иначе системный установщик
-    // открывается с «ошибкой пакета», хотя приложение сообщает «Installer opened».
     let probe;
     try { probe = await execute(`test -s '${path}' && echo FOUND || echo MISSING`); } catch (e) { probe = null; }
     if (!/FOUND/.test(probe?.output || '')) {
@@ -323,7 +323,23 @@ const BuildScreen = ({ navigation }) => {
     }
     append(`$ install ${path}`, 'command');
     const r = await apt.installApk?.(path);
-    append(r?.success ? 'Installer opened' : r?.output || 'Install unavailable', r?.success ? 'success' : 'error');
+    if (r?.success) {
+      append(ru ? `Запрос на открытие APK отправлен: ${r.output || path}` : `Open APK requested: ${r.output || path}`, 'success');
+      return;
+    }
+    // Ошибка — для RuStore показываем дружелюбную инструкцию + Share
+    const errText = r?.output || (ru ? 'Прямая установка отключена для RuStore' : 'Direct install disabled for RuStore');
+    append(`✗ ${errText}`, 'error');
+    // APK уже экспортирован в /sdcard/Download/NovaCompose/... — предлагаем поделиться
+    const exportHint = ru
+      ? `APK сохранён в Загрузки/NovaCompose/${currentProject.name}/apk — откройте его через системный файловый менеджер для установки.`
+      : `APK exported to Downloads/NovaCompose/${currentProject.name}/apk — open it via system file manager to install.`;
+    append(exportHint, 'warning');
+    addWorkspaceLog(`${errText}\n${exportHint}`, 'warning');
+    // Пробуем системный Share (пользователь выберет файловый менеджер / Telegram / Drive)
+    try {
+      await Share.share({ message: ru ? `APK: ${path}` : `APK: ${path}`, title: ru ? 'Поделиться APK' : 'Share APK' });
+    } catch (_) {}
   };
 
   // «Журнал» — расшарить ПОЛНЫЙ вывод сборки. Весь вывод идёт в нативный терминал,
