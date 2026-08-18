@@ -1,74 +1,32 @@
 Question ID (machine readable),Response ID (machine readable),Response value,Answer requirement,Human-friendly question label
-PSL_DATA_COLLECTION_COLLECTS_PERSONAL_DATA,,TRUE,REQUIRED,Does your app collect or share any of the required user data types?
-PSL_DATA_COLLECTION_ENCRYPTED_IN_TRANSIT,,TRUE,MAYBE_REQUIRED,Is all of the user data collected by your app encrypted in transit?
-PSL_DATA_COLLECTION_USER_REQUEST_DELETE,,TRUE,MAYBE_REQUIRED,Do you provide a way for users to request that their data is deleted?
-PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_USERNAME_AND_PASSWORD,,MULTIPLE_CHOICE,"Which account creation methods are available in your app? Select all that apply.
-Username and password"
-PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_USERNAME_AND_ADDITIONAL_AUTHENTICATION,,MULTIPLE_CHOICE,"Which account creation methods are available in your app? Select all that apply.
-Username and additional authentication"
-PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_USERNAME_PASSWORD_AND_ADDITIONAL_AUTHENTICATION,,MULTIPLE_CHOICE,"Which account creation methods are available in your app? Select all that apply.
-Username, password, and additional authentication"
-PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_OAUTH,,MULTIPLE_CHOICE,"Which account creation methods are available in your app? Select all that apply.
-OAuth"
-PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_OTHER,,MULTIPLE_CHOICE,"Which account creation methods are available in your app? Select all that apply.
-Other"
-PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_ACCOUNT_CREATION_NOT_SUPPORTED,TRUE,MULTIPLE_CHOICE,"Which account creation methods are available in your app? Select all that apply.
-Account creation is not supported in this app"
-PSL_DATA_TYPES_IDENTIFIERS,PSL_DEVICE_ID,TRUE,MULTIPLE_CHOICE,"Device or other identifiers
-Device or other identifiers"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:PSL_DATA_USAGE_COLLECTION_AND_SHARING,PSL_DATA_USAGE_ONLY_COLLECTED,TRUE,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Is this data collected, shared, or both?
-Collected"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:PSL_DATA_USAGE_COLLECTION_AND_SHARING,PSL_DATA_USAGE_ONLY_SHARED,TRUE,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Is this data collected, shared, or both?
-Shared"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:PSL_DATA_USAGE_EPHEMERAL,,FALSE,MAYBE_REQUIRED,"Data usage and handling (Device or other identifiers)
-Is this data processed ephemerally?"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_USER_CONTROL,PSL_DATA_USAGE_USER_CONTROL_OPTIONAL,TRUE,SINGLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Is this data required for your app, or can users choose whether it's collected?
-Users can choose whether this data is collected"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_USER_CONTROL,PSL_DATA_USAGE_USER_CONTROL_REQUIRED,,SINGLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Is this data required for your app, or can users choose whether it's collected?
-Data collection is required (users can't turn off this data collection)"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_COLLECTION_PURPOSE,PSL_APP_FUNCTIONALITY,,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Why is this user data collected? Select all that apply.
-App functionality"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_COLLECTION_PURPOSE,PSL_ANALYTICS,,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Why is this user data collected? Select all that apply.
-Analytics"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_COLLECTION_PURPOSE,PSL_DEVELOPER_COMMUNICATIONS,,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Why is this user data collected? Select all that apply.
-Developer communications"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_COLLECTION_PURPOSE,PSL_FRAUD_PREVENTION_SECURITY,,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Why is this user data collected? Select all that apply.
-Fraud prevention, security, and compliance"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_COLLECTION_PURPOSE,PSL_ADVERTISING,TRUE,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Why is this user data collected? Select all that apply.
-Advertising or marketing"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_COLLECTION_PURPOSE,PSL_PERSONALIZATION,,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Why is this user data collected? Select all that apply.
-Personalization"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_COLLECTION_PURPOSE,PSL_ACCOUNT_MANAGEMENT,,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Why is this user data collected? Select all that apply.
-Account management"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_SHARING_PURPOSE,PSL_APP_FUNCTIONALITY,,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Why is this user data shared? Select all that apply.
-App functionality"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_SHARING_PURPOSE,PSL_ANALYTICS,,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Why is this user data shared? Select all that apply.
-Analytics"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_SHARING_PURPOSE,PSL_DEVELOPER_COMMUNICATIONS,,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Why is this user data shared? Select all that apply.
-Developer communications"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_SHARING_PURPOSE,PSL_FRAUD_PREVENTION_SECURITY,,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Why is this user data shared? Select all that apply.
-Fraud prevention, security, and compliance"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_SHARING_PURPOSE,PSL_ADVERTISING,TRUE,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Why is this user data shared? Select all that apply.
-Advertising or marketing"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_SHARING_PURPOSE,PSL_PERSONALIZATION,,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Why is this user data shared? Select all that apply.
-Personalization"
-PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_SHARING_PURPOSE,PSL_ACCOUNT_MANAGEMENT,,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
-Why is this user data shared? Select all that apply.
-Account management"
+PSL_DATA_COLLECTION_COLLECTS_PERSONAL_DATA,,true,REQUIRED,Ваше приложение собирает пользовательские данные или передает их третьим лицам?
+PSL_DATA_COLLECTION_ENCRYPTED_IN_TRANSIT,,true,MAYBE_REQUIRED,"Все пользовательские данные, которые собирает приложение, передаются в зашифрованном виде?"
+PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_ACM_USER_ID_PASSWORD,,MULTIPLE_CHOICE,Какие способы создания аккаунта доступны в вашем приложении? Выберите все подходящие варианты./Имя пользователя и пароль
+PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_ACM_USER_ID_OTHER_AUTH,,MULTIPLE_CHOICE,Какие способы создания аккаунта доступны в вашем приложении? Выберите все подходящие варианты./Имя пользователя и другие данные для подтверждения личности
+PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_ACM_USER_ID_PASSWORD_OTHER_AUTH,,MULTIPLE_CHOICE,"Какие способы создания аккаунта доступны в вашем приложении? Выберите все подходящие варианты./Имя пользователя, пароль и другие данные для аутентификации"
+PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_ACM_OAUTH,,MULTIPLE_CHOICE,Какие способы создания аккаунта доступны в вашем приложении? Выберите все подходящие варианты./OAuth
+PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_ACM_OTHER,,MULTIPLE_CHOICE,Какие способы создания аккаунта доступны в вашем приложении? Выберите все подходящие варианты./Другое
+PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_ACM_NONE,true,MULTIPLE_CHOICE,Какие способы создания аккаунта доступны в вашем приложении? Выберите все подходящие варианты./В приложении нельзя создать аккаунт
+PSL_SUPPORT_DATA_DELETION_BY_USER,DATA_DELETION_YES,,SINGLE_CHOICE,У пользователей есть возможность запросить удаление своих данных?/Да
+PSL_SUPPORT_DATA_DELETION_BY_USER,DATA_DELETION_NO,true,SINGLE_CHOICE,У пользователей есть возможность запросить удаление своих данных?/Нет
+PSL_SUPPORT_DATA_DELETION_BY_USER,DATA_DELETION_NO_AUTO_DELETED,,SINGLE_CHOICE,"У пользователей есть возможность запросить удаление своих данных?/Нет, но пользовательские данные автоматически удаляются в течение 90 дней"
+PSL_DATA_TYPES_IDENTIFIERS,PSL_DEVICE_ID,true,MULTIPLE_CHOICE,Идентификаторы устройства или другие идентификаторы/Идентификаторы устройства или другие идентификаторы
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:PSL_DATA_USAGE_COLLECTION_AND_SHARING,PSL_DATA_USAGE_ONLY_COLLECTED,true,MULTIPLE_CHOICE,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/Приложение собирает и/или передает эти данные?/Собирает
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:PSL_DATA_USAGE_COLLECTION_AND_SHARING,PSL_DATA_USAGE_ONLY_SHARED,true,MULTIPLE_CHOICE,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/Приложение собирает и/или передает эти данные?/Передает
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:PSL_DATA_USAGE_EPHEMERAL,,false,MAYBE_REQUIRED,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/Эти данные обрабатываются временно?
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_USER_CONTROL,PSL_DATA_USAGE_USER_CONTROL_OPTIONAL,true,SINGLE_CHOICE,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/Эти данные необходимы для работы приложения или пользователи могут запретить их сбор?/Пользователи могут разрешать или запрещать сбор данных
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_USER_CONTROL,PSL_DATA_USAGE_USER_CONTROL_REQUIRED,,SINGLE_CHOICE,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/Эти данные необходимы для работы приложения или пользователи могут запретить их сбор?/Сбор данных обязателен (пользователи не могут отключить эту функцию)
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_COLLECTION_PURPOSE,PSL_APP_FUNCTIONALITY,,MULTIPLE_CHOICE,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/С какой целью собираются эти пользовательские данные? Выберите все подходящие варианты./Функции приложения
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_COLLECTION_PURPOSE,PSL_ANALYTICS,,MULTIPLE_CHOICE,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/С какой целью собираются эти пользовательские данные? Выберите все подходящие варианты./Аналитика
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_COLLECTION_PURPOSE,PSL_DEVELOPER_COMMUNICATIONS,,MULTIPLE_CHOICE,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/С какой целью собираются эти пользовательские данные? Выберите все подходящие варианты./Связь с разработчиком
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_COLLECTION_PURPOSE,PSL_FRAUD_PREVENTION_SECURITY,,MULTIPLE_CHOICE,"Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/С какой целью собираются эти пользовательские данные? Выберите все подходящие варианты./Предотвращение мошенничества, безопасность и соответствие требованиям"
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_COLLECTION_PURPOSE,PSL_ADVERTISING,true,MULTIPLE_CHOICE,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/С какой целью собираются эти пользовательские данные? Выберите все подходящие варианты./Реклама или маркетинг
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_COLLECTION_PURPOSE,PSL_PERSONALIZATION,,MULTIPLE_CHOICE,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/С какой целью собираются эти пользовательские данные? Выберите все подходящие варианты./Персонализация
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_COLLECTION_PURPOSE,PSL_ACCOUNT_MANAGEMENT,,MULTIPLE_CHOICE,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/С какой целью собираются эти пользовательские данные? Выберите все подходящие варианты./Управление аккаунтом
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_SHARING_PURPOSE,PSL_APP_FUNCTIONALITY,,MULTIPLE_CHOICE,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/С какой целью передаются эти пользовательские данные? Выберите все подходящие варианты./Функции приложения
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_SHARING_PURPOSE,PSL_ANALYTICS,,MULTIPLE_CHOICE,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/С какой целью передаются эти пользовательские данные? Выберите все подходящие варианты./Аналитика
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_SHARING_PURPOSE,PSL_DEVELOPER_COMMUNICATIONS,,MULTIPLE_CHOICE,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/С какой целью передаются эти пользовательские данные? Выберите все подходящие варианты./Связь с разработчиком
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_SHARING_PURPOSE,PSL_FRAUD_PREVENTION_SECURITY,,MULTIPLE_CHOICE,"Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/С какой целью передаются эти пользовательские данные? Выберите все подходящие варианты./Предотвращение мошенничества, безопасность и соответствие требованиям"
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_SHARING_PURPOSE,PSL_ADVERTISING,true,MULTIPLE_CHOICE,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/С какой целью передаются эти пользовательские данные? Выберите все подходящие варианты./Реклама или маркетинг
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_SHARING_PURPOSE,PSL_PERSONALIZATION,,MULTIPLE_CHOICE,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/С какой целью передаются эти пользовательские данные? Выберите все подходящие варианты./Персонализация
+PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:DATA_USAGE_SHARING_PURPOSE,PSL_ACCOUNT_MANAGEMENT,,MULTIPLE_CHOICE,Использование и обработка данных (Идентификаторы устройства или другие идентификаторы)/С какой целью передаются эти пользовательские данные? Выберите все подходящие варианты./Управление аккаунтом
