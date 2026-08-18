@@ -2,6 +2,18 @@ Question ID (machine readable),Response ID (machine readable),Response value,Ans
 PSL_DATA_COLLECTION_COLLECTS_PERSONAL_DATA,,TRUE,REQUIRED,Does your app collect or share any of the required user data types?
 PSL_DATA_COLLECTION_ENCRYPTED_IN_TRANSIT,,TRUE,MAYBE_REQUIRED,Is all of the user data collected by your app encrypted in transit?
 PSL_DATA_COLLECTION_USER_REQUEST_DELETE,,TRUE,MAYBE_REQUIRED,Do you provide a way for users to request that their data is deleted?
+PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_USERNAME_AND_PASSWORD,,MULTIPLE_CHOICE,"Which account creation methods are available in your app? Select all that apply.
+Username and password"
+PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_USERNAME_AND_ADDITIONAL_AUTHENTICATION,,MULTIPLE_CHOICE,"Which account creation methods are available in your app? Select all that apply.
+Username and additional authentication"
+PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_USERNAME_PASSWORD_AND_ADDITIONAL_AUTHENTICATION,,MULTIPLE_CHOICE,"Which account creation methods are available in your app? Select all that apply.
+Username, password, and additional authentication"
+PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_OAUTH,,MULTIPLE_CHOICE,"Which account creation methods are available in your app? Select all that apply.
+OAuth"
+PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_OTHER,,MULTIPLE_CHOICE,"Which account creation methods are available in your app? Select all that apply.
+Other"
+PSL_SUPPORTED_ACCOUNT_CREATION_METHODS,PSL_ACCOUNT_CREATION_NOT_SUPPORTED,TRUE,MULTIPLE_CHOICE,"Which account creation methods are available in your app? Select all that apply.
+Account creation is not supported in this app"
 PSL_DATA_TYPES_IDENTIFIERS,PSL_DEVICE_ID,TRUE,MULTIPLE_CHOICE,"Device or other identifiers
 Device or other identifiers"
 PSL_DATA_USAGE_RESPONSES:PSL_DEVICE_ID:PSL_DATA_USAGE_COLLECTION_AND_SHARING,PSL_DATA_USAGE_ONLY_COLLECTED,TRUE,MULTIPLE_CHOICE,"Data usage and handling (Device or other identifiers)
