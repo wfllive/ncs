@@ -29,6 +29,8 @@ type EditorConfig = {
   spacesForTab?: boolean;
   wordWrap?: boolean;
   completion?: boolean;
+  /** Язык активной вкладки: 'jsx' | 'java' | 'xml' (подсветка + автодополнение). */
+  lang?: 'jsx' | 'java' | 'xml' | string;
 };
 
 export type CodeMirrorEditorHandle = {
@@ -87,7 +89,8 @@ const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEditorProp
     tabSize = 4,
     spacesForTab = true,
     wordWrap = false,
-    completion = true
+    completion = true,
+    lang = 'jsx'
   } = config;
   const post = useCallback(msg => {
     // Double JSON-encoding makes the payload immune to any special characters.
@@ -121,6 +124,7 @@ const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEditorProp
       spacesForTab,
       wordWrap,
       completion,
+      lang,
       readOnly
     };
     const key = JSON.stringify(cfg);
@@ -130,7 +134,7 @@ const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEditorProp
       type: 'config',
       config: cfg
     });
-  }, [themeMode, fontSize, tabSize, spacesForTab, wordWrap, completion, readOnly, post]);
+  }, [themeMode, fontSize, tabSize, spacesForTab, wordWrap, completion, lang, readOnly, post]);
 
   // Lint diagnostics → inline squiggles.
   useEffect(() => {

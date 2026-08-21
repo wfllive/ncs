@@ -30,7 +30,8 @@ import {
   syntaxHighlighting, HighlightStyle, bracketMatching, indentOnInput,
   StreamLanguage, LanguageSupport, indentUnit, foldGutter, codeFolding,
 } from '@codemirror/language';
-import { kotlin } from '@codemirror/legacy-modes/mode/clike';
+import { kotlin, java } from '@codemirror/legacy-modes/mode/clike';
+import { xml } from '@codemirror/legacy-modes/mode/xml';
 import {
   autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap,
   completeAnyWord, snippetCompletion,
@@ -196,10 +197,32 @@ const jsLanguage = StreamLanguage.define({
   },
 });
 const jsxSupport = new LanguageSupport(jsLanguage);
+// Java и XML — режимы подсветки для проектов Java + XML.
+const javaSupport = new LanguageSupport(StreamLanguage.define(java));
+const xmlSupport = new LanguageSupport(StreamLanguage.define(xml));
 
 const KEYWORDS = ('function const let var class import export default from return if else when for while do switch case break continue try catch finally throw new this super extends static async await ' +
   'true false null undefined typeof instanceof in of as').split(' ')
   .map((label) => ({ label, type: 'keyword' }));
+
+const JAVA_KEYWORDS = ('abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public return short static strictfp super switch synchronized this throw throws transient try void volatile while true false null ' +
+  'String Integer Boolean Bundle View Activity Intent TextView Button EditText LinearLayout findViewById setContentView startActivity onClick').split(' ')
+  .map((label) => ({ label, type: 'keyword' }));
+
+const JAVA_SNIPPETS = [
+  snippetCompletion('public class ${Name} extends Activity {\n\n\t@Override\n\tprotected void onCreate(Bundle savedInstanceState) {\n\t\tsuper.onCreate(savedInstanceState);\n\t\tsetContentView(R.layout.${layout});\n\t}\n}', { label: 'Activity', type: 'snippet', detail: 'Android' }),
+  snippetCompletion('${view}.setOnClickListener(v -> {\n\t${}\n});', { label: 'setOnClickListener', type: 'snippet', detail: 'Android' }),
+  snippetCompletion('startActivity(new Intent(this, ${Target}.class));', { label: 'startActivity', type: 'snippet', detail: 'Android' }),
+  snippetCompletion('Toast.makeText(this, "${text}", Toast.LENGTH_SHORT).show();', { label: 'Toast', type: 'snippet', detail: 'Android' }),
+  snippetCompletion('String ${name} = getIntent().getStringExtra("${key}");', { label: 'getStringExtra', type: 'snippet', detail: 'Android' }),
+  snippetCompletion('SharedPreferences ${prefs} = getSharedPreferences("${name}", MODE_PRIVATE);', { label: 'SharedPreferences', type: 'snippet', detail: 'Android' }),
+];
+
+const XML_WIDGETS = ('LinearLayout FrameLayout RelativeLayout ScrollView TextView Button EditText ImageView ImageButton CheckBox RadioButton Switch ProgressBar Spinner Toolbar View Space include merge RecyclerView CardView WebView VideoView').split(' ')
+  .map((label) => ({ label, type: 'type', detail: 'widget' }));
+
+const XML_ATTRS = ('android:id android:layout_width android:layout_height android:layout_weight android:orientation android:gravity android:text android:textSize android:textColor android:textStyle android:background android:backgroundTint android:padding android:layout_margin android:hint android:src android:scaleType android:checked android:visibility android:elevation android:contentDescription layout_width="match_parent" layout_width="wrap_content"').split(' ')
+  .map((label) => ({ label, type: 'property', detail: 'attribute' }));
 
 const REACT_SNIPEETS = [
   snippetCompletion('const [${name}, set${Name}] = useState(${value})', { label: 'useState', type: 'snippet', detail: 'React hook' }),
@@ -223,6 +246,31 @@ const jsxCompletions = (context) => {
   return { from: word.from, options: [...KEYWORDS, ...REACT_SNIPEETS], validFor: /^[\w$]*$/ };
 };
 
+const javaCompletions = (context) => {
+  const word = context.matchBefore(/[\w$]*/);
+  if (!word || (word.from === word.to && !context.explicit)) return null;
+  return { from: word.from, options: [...JAVA_KEYWORDS, ...JAVA_SNIPPETS], validFor: /^[\w$]*$/ };
+};
+
+// XML: дополняем имена виджетов и атрибуты (включая "android:…").
+const xmlCompletions = (context) => {
+  const word = context.matchBefore(/[\w:.-]*/);
+  if (!word || (word.from === word.to && !context.explicit)) return null;
+  return { from: word.from, options: [...XML_WIDGETS, ...XML_ATTRS], validFor: /^[\w:.-]*$/ };
+};
+
+/* Выбор языковой поддержки: jsx (по умолчанию) | java | xml. */
+const languageExtensions = (lang) => {
+  if (lang === 'java') return javaSupport;
+  if (lang === 'xml') return xmlSupport;
+  return jsxSupport;
+};
+const completionsFor = (lang) => {
+  if (lang === 'java') return javaCompletions;
+  if (lang === 'xml') return xmlCompletions;
+  return jsxCompletions;
+};
+
 /* ------------------------------------------------------- dynamic settings */
 
 const themeComp = new Compartment();
@@ -231,10 +279,11 @@ const wrapComp = new Compartment();
 const completionComp = new Compartment();
 const editableComp = new Compartment();
 const readOnlyComp = new Compartment();
+const langComp = new Compartment();
 
 let config = {
   theme: 'dark', fontSize: 15, tabSize: 4, spacesForTab: true,
-  wordWrap: false, completion: true, readOnly: false,
+  wordWrap: false, completion: true, readOnly: false, lang: 'jsx',
 };
 
 const themeExtensions = (c, fontSize) => [
@@ -242,8 +291,8 @@ const themeExtensions = (c, fontSize) => [
   syntaxHighlighting(c.dark ? darkHighlight : lightHighlight),
 ];
 
-const completionExtensions = (on) => (on
-  ? [autocompletion({ override: [jsxCompletions, completeAnyWord], icons: true, selectOnOpen: true })]
+const completionExtensions = (on, lang) => (on
+  ? [autocompletion({ override: [completionsFor(lang || config.lang), completeAnyWord], icons: true, selectOnOpen: true })]
   : []);
 
 /* ------------------------------------------------------------- RN bridge */
@@ -307,7 +356,7 @@ const makeExtensions = () => [
   codeFolding({ placeholderText: ' ··· ' }),
   foldGutter({ openText: '▾', closedText: '▸' }),
   history(),
-  jsxSupport,
+  langComp.of(languageExtensions(config.lang)),
   highlightActiveLine(),
   highlightSelectionMatches(),
   lintGutter(),
@@ -317,7 +366,7 @@ const makeExtensions = () => [
     EditorState.tabSize.of(config.tabSize),
   ]),
   wrapComp.of(config.wordWrap ? [EditorView.lineWrapping] : []),
-  completionComp.of(completionExtensions(config.completion)),
+  completionComp.of(completionExtensions(config.completion, config.lang)),
   editableComp.of(EditorView.editable.of(!config.readOnly)),
   readOnlyComp.of(EditorState.readOnly.of(config.readOnly)),
   EditorView.updateListener.of((update) => {
@@ -426,7 +475,12 @@ const applyConfig = (next) => {
     effects.push(wrapComp.reconfigure(config.wordWrap ? [EditorView.lineWrapping] : []));
   }
   if (next.completion !== undefined && next.completion !== prev.completion) {
-    effects.push(completionComp.reconfigure(completionExtensions(config.completion)));
+    effects.push(completionComp.reconfigure(completionExtensions(config.completion, config.lang)));
+  }
+  // Смена языка файла: другая подсветка и другое автодополнение.
+  if (next.lang !== undefined && next.lang !== prev.lang) {
+    effects.push(langComp.reconfigure(languageExtensions(config.lang)));
+    effects.push(completionComp.reconfigure(completionExtensions(config.completion, config.lang)));
   }
   if (next.readOnly !== undefined && next.readOnly !== prev.readOnly) {
     effects.push(editableComp.reconfigure(EditorView.editable.of(!config.readOnly)));

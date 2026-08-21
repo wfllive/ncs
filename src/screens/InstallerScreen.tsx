@@ -25,7 +25,7 @@ const InstallerScreen = ({ onInstalled }) => {
     install: 'Установить Ubuntu',
     retry: 'Повторить установку',
     unavailable: 'Нужна нативная development-сборка',
-    unavailableText: 'Установка rootfs использует нативные модули и недоступна в браузере. Установите нативную development-сборку NovaCompose Studio.',
+    unavailableText: 'Установка rootfs использует нативные модули и недоступна в браузере. Установите нативную development-сборку NovaJava Studio.',
     security: 'Фиксированный официальный образ проекта',
     size: 'Скачивание и распаковка могут занять несколько минут. Можно свернуть приложение — установка продолжится в фоне.',
     failed: 'Не удалось установить рабочую среду.',
@@ -42,7 +42,7 @@ const InstallerScreen = ({ onInstalled }) => {
     install: 'Install Ubuntu',
     retry: 'Retry installation',
     unavailable: 'A native development build is required',
-    unavailableText: 'Rootfs installation uses native modules and is unavailable in the browser. Install the native NovaCompose Studio development build.',
+    unavailableText: 'Rootfs installation uses native modules and is unavailable in the browser. Install the native NovaJava Studio development build.',
     security: 'Fixed project-provided image',
     size: 'Downloading and extracting can take several minutes. You can minimize the app — it keeps running in the background.',
     failed: 'Workspace installation failed.',
@@ -181,7 +181,7 @@ const InstallerScreen = ({ onInstalled }) => {
             <Icon name="information-circle-outline" size={18} color={colors.textSecondary} />
             <Text style={styles.noteText}>{copy.security}. {copy.size}</Text>
           </View>
-          <Text style={styles.platform}>NovaCompose Studio · Android · Gradle · {Platform.OS}</Text>
+          <Text style={styles.platform}>NovaJava Studio · Android · custom build · {Platform.OS}</Text>
         </View>
       </ScrollView>
     </AppScreen>

@@ -1,4 +1,5 @@
-// @ts-nocheck — экран сохранён без визуальных изменений относительно main.
+// Экран сборки: КАСТОМНЫЙ пайплайн без Gradle (aapt2 → javac → d8 → zipalign → apksigner).
+// @ts-nocheck — экран собран по образцу прежнего, типы не строже исходника.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, Share, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
@@ -9,27 +10,25 @@ import { useAppSettings } from '../store/appSettings';
 import { execute } from '../utils/shellExecutor';
 import { shellQuote } from '../utils/workspace';
 import { getProjectDir, slugifyProject } from '../config/runtime';
-import { prepareProject } from '../utils/prepareProject';
-import { refreshAndroidScaffold, ensureProjectIntegrity } from '../utils/composeProject';
+import { syncJavaProject, ensureJavaProjectIntegrity, refreshJavaScaffold } from '../utils/javaProject';
+import { checkBuildEnv } from '../utils/nativeBuild';
 import * as apt from '../../modules/apt-manager/src/index';
 import { startBackground, stopBackground } from '../utils/background';
 import { TerminalView, isAvailable as terminalAvailable } from '../../modules/termux-terminal/src/index';
 import AdsBanner from '../components/AdsBanner';
 import { maybeShowInterstitial } from '../ads/yandexAds';
 
-// Терминал сборки — только вывод: панель спец-клавиш (ESC/CTRL/…) скрыта,
-// экранная клавиатура не появляется, ручной ввод запрещён — всё запускается кнопками.
+// Терминал сборки — только вывод: ручной ввод запрещён, всё запускается кнопками.
 const EXTRA_KEYS = '[]';
 
 const tasks = {
-  dev: { icon: 'flash-outline', label: 'Vite dev', cmd: 'npm run dev', desc: 'Локальный Vite dev-server', tone: 'info' },
-  build: { icon: 'hammer-outline', label: 'Vite build', cmd: 'npm run build', desc: 'Сборка dist/', tone: 'success' },
-  android: { icon: 'logo-android', label: 'Android APK', cmd: 'bash build-android.sh', desc: 'подготовка → dist → assets → APK', tone: 'warning' },
-  prepare: { icon: 'shield-checkmark-outline', label: 'Prepare SDK37', cmd: 'bash prepare.sh', desc: '7 шагов: wrapper/SDK37/конфликты', tone: 'info' },
+  debug: { icon: 'bug-outline', label: 'Debug APK', cmd: 'bash build.sh debug', desc: 'быстрая сборка (D8) с debug-подписью', tone: 'success' },
+  release: { icon: 'lock-closed-outline', label: 'Release APK', cmd: 'bash build.sh release', desc: 'R8 + подпись из storm.m', tone: 'warning' },
+  aab: { icon: 'cube-outline', label: 'AAB (Play)', cmd: 'bash build.sh aab', desc: 'Android App Bundle для магазинов', tone: 'info' },
+  keystore: { icon: 'key-outline', label: 'Ключ подписи', cmd: 'bash build.sh keystore', desc: 'release-keystore для публикации', tone: 'info' },
+  clean: { icon: 'trash-outline', label: 'Очистка', cmd: 'bash build.sh clean', desc: 'удалить артефакты сборки', tone: 'info' },
 };
 
-// Адаптивный селектор: на узком экране — сетка карточек (2 в ряд, подписи не режутся),
-// на широком — обычный SegmentedControl.
 const OptionPicker = ({ value, onChange, options, grid, colors }) => {
   if (!grid) return <SegmentedControl value={value} onChange={onChange} options={options} />;
   return (
@@ -71,16 +70,13 @@ const BuildScreen = ({ navigation }) => {
   const { width } = useWindowDimensions();
   const { currentProject, addWorkspaceLog } = useProject();
   const { colors, language, t } = useAppSettings();
-  const [task, setTask] = useState('build');
-  const [variant, setVariant] = useState('debug'); // debug | release (для задачи android)
+  const [task, setTask] = useState('debug');
   const [running, setRunning] = useState(false);
   const [logs, setLogs] = useState([]);
   const [resultState, setResultState] = useState('idle');
 
-  // Полноэкранная реклама РСЯ — только после успешной сборки и не чаще,
-  // чем задано в adsConfig (no-op, если нативный SDK недоступен).
   useEffect(() => {
-    if (resultState === 'success') void maybeShowInterstitial();
+    if (resultState === 'success' && (task === 'debug' || task === 'release')) void maybeShowInterstitial();
   }, [resultState]);
 
   const [artifact, setArtifact] = useState('');
@@ -93,18 +89,20 @@ const BuildScreen = ({ navigation }) => {
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const desktop = width >= 800;
-  const narrow = width < 560; // телефон в портрете: прячем второстепенные кнопки шапки консоли
-  const useGridPicker = width < 620; // на телефоне SegmentedControl режет подписи — сетка карточек
-  const stackButtons = width < 400; // «Запустить»/«Prepare» в колонку во всю ширину
+  const narrow = width < 560;
+  const useGridPicker = width < 620;
+  const stackButtons = width < 400;
   const ru = language === 'ru';
 
   const copy = ru ? {
-    title: 'Сборка React', subtitle: 'React + Vite', choose: 'Задача сборки', run: 'Запустить', running: 'Выполняется…', success: 'Успешно', failed: 'Ошибка',
-    terminal: 'Журнал сборки', clear: 'Очистить', install: 'Установить APK', launch: 'Открыть', note: 'Подготовка проекта выполняется автоматически — отдельный Prepare не нужен. Одна кнопка «Запустить» — полный цикл: файлы проекта → Vite build → assets → Gradle → проверка APK (aapt2) → экспорт в Загрузки/NovaCompose/<проект>/apk.',
+    title: 'Сборка', subtitle: 'Java + XML · без Gradle', choose: 'Задача сборки', run: 'Запустить', running: 'Выполняется…', success: 'Успешно', failed: 'Ошибка',
+    terminal: 'Журнал сборки', clear: 'Очистить', install: 'Установить APK', launch: 'Открыть',
+    note: 'Кастомный пайплайн: aapt2 → javac → d8 → zipalign → apksigner. Без Gradle-демона и разрешения зависимостей — сборка занимает секунды. Перед сборкой исходники экранов автоматически записываются на диск.',
     noProject: 'Сначала откройте проект.', artifact: 'Артефакт', clean: 'Очистить',
   } : {
-    title: 'React Build', subtitle: 'React + Vite', choose: 'Build task', run: 'Run', running: 'Running…', success: 'Success', failed: 'Failed',
-    terminal: 'Build log', clear: 'Clear', install: 'Install APK', launch: 'Open', note: 'Project preparation runs automatically — no separate Prepare needed. One Run button — the full cycle: project files → Vite build → assets → Gradle → APK check (aapt2) → export to Downloads/NovaCompose/<project>/apk.',
+    title: 'Build', subtitle: 'Java + XML · no Gradle', choose: 'Build task', run: 'Run', running: 'Running…', success: 'Success', failed: 'Failed',
+    terminal: 'Build log', clear: 'Clear', install: 'Install APK', launch: 'Open',
+    note: 'Custom pipeline: aapt2 → javac → d8 → zipalign → apksigner. No Gradle daemon, no dependency resolution — builds take seconds. Screen sources are written to disk automatically before the build.',
     noProject: 'Open a project first.', artifact: 'Artifact', clean: 'Clean',
   };
 
@@ -117,29 +115,24 @@ const BuildScreen = ({ navigation }) => {
     }
   };
 
-  // Строки журнала/статусов выводим в терминал как КОММЕНТАРИИ bash ("# ...") —
-  // иначе shell пытается их выполнить и транскрипт журнала засоряется мусором
-  // вида "bash: ✓: command not found" / "syntax error near unexpected token `('".
+  // Строки журнала выводим комментариями bash, чтобы терминал не пытался их выполнить.
   const sayInTerminal = (text) => {
     const s = String(text ?? '').replace(/\r/g, '');
     writeTerminal(s.split('\n').map((l) => (l ? `# ${l}` : '')).join('\n'));
   };
 
-  // Выполнить команду ВНУТРИ терминала (PTY), вернуть true/false по маркеру.
-  // Как в установщике: терминал показывает живой bash, а не журнал.
+  // Выполнить команду внутри терминала (PTY), вернуть true/false по маркеру.
   const runInTerminal = async (label, command, { timeoutMs = 30 * 60 * 1000, cwd } = {}) => {
     if (!terminalReadyRef.current) {
-      // Терминал не готов — фолбэк: команда через execute (журнал).
       append(`$ ${label}`, 'command');
-      const r = await execute(`cd ${cwd ? `'${cwd}'` : ''} && ${command} 2>&1; echo RC:$?`, cwd);
+      const r = await execute(`${command} 2>&1; echo RC:$?`, cwd);
       String(r.output || '').split('\n').filter(Boolean).forEach((l) => append(l));
       return /RC:0\b/.test(r.output || '');
     }
     const marker = '/root/.rai-build.done';
-    const full = `echo "" > ${marker}; cd ${cwd ? `'${cwd}'` : ''} && ${command}; rc=$?; echo "rc:$rc" > ${marker}`;
+    const full = `echo "" > ${marker}; cd ${cwd ? shellQuote(cwd) : '$PWD'} && ${command}; rc=$?; echo "rc:$rc" > ${marker}`;
     sayInTerminal(`── ${label} ──`);
     try { terminalRef.current?.writeText?.(full + '\n'); } catch (_) {}
-    // Ждём маркер
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       try {
@@ -151,7 +144,7 @@ const BuildScreen = ({ navigation }) => {
           return ok;
         }
       } catch (_) {}
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, 1200));
     }
     append(`✗ ${label} — таймаут`, 'error');
     return false;
@@ -170,7 +163,7 @@ const BuildScreen = ({ navigation }) => {
 
   const clearConsole = () => {
     setLogs([]);
-    try { terminalRef.current?.writeText?.('[2J[H'); } catch (_) {}
+    try { terminalRef.current?.writeText?.('\u001b[2J\u001b[H'); } catch (_) {}
   };
 
   const append = (text, level = 'normal') => {
@@ -178,128 +171,82 @@ const BuildScreen = ({ navigation }) => {
     sayInTerminal(text);
   };
 
-  const runPrepare = async () => {
+  const run = async () => {
     if (!currentProject || running) return;
-    setRunning(true); setResultState('running'); setLogs([]); setArtifact('');
+    const selected = task;
+    setRunning(true); setResultState('running'); setArtifact('');
     const cwd = getProjectDir(currentProject);
-    await startBackground(`${copy.title}: Prepare`);
+    await startBackground(`${copy.title}: ${tasks[selected].label}`);
     try {
-      // prepare в терминале (или JS-фолбэк, если нет терминала)
-      if (terminalReadyRef.current) {
-        const ok = await runInTerminal('prepare.sh — 7 шагов SDK37', '([ -f prepare.sh ] && bash prepare.sh) || echo "prepare.sh нет — используйте Android APK"', { timeoutMs: 30 * 60 * 1000, cwd });
-        if (!ok) throw new Error('prepare не завершился — смотрите терминал');
-      } else {
-        const r = await prepareProject(currentProject, { download: true });
-        if (!r.success) throw new Error(r.output || 'prepare failed');
-      }
-      setResultState('success');
-    } catch (e) { append(e?.message || String(e), 'error'); setResultState('error'); }
-    finally { setRunning(false); await stopBackground(); setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80); }
-  };
-
-  const run = async (selected = task) => {
-    if (!currentProject || running) return;
-    // Prepare имеет собственный цикл и свою проверку running — вызываем ДО setRunning(true),
-    // иначе runPrepare мгновенно выходит по флагу и подготовка никогда не стартует.
-    if (selected === 'prepare') {
-      return runPrepare();
-    }
-    setRunning(true); setResultState('running'); setLogs([]); setArtifact('');
-    const cwd = getProjectDir(currentProject);
-    // Фоновая служба: долгая сборка (npm install / vite / gradle) продолжается,
-    // даже если приложение свернуть или заблокировать экран.
-    await startBackground(`${copy.title}: ${selected === 'android' ? `APK ${variant.toUpperCase()}` : (tasks[selected]?.label || selected)}`);
-    try {
-      sayInTerminal(`🔧 ${selected === 'android' ? `APK ${variant.toUpperCase()}` : (tasks[selected]?.label || selected)} — ${currentProject.name}`);
-      if (selected === 'dev') {
-        // dev-server не ждёт завершения — запускаем в фоне и показываем PID
-        await runInTerminal('Vite dev (фоновый)', 'nohup npm run dev -- --host 0.0.0.0 --port 5173 > /tmp/vite.log 2>&1 & echo $!', { timeoutMs: 30000, cwd });
-        sayInTerminal('Откройте http://localhost:5173 или предпросмотр в приложении');
+      if (selected === 'clean') {
+        const ok = await runInTerminal('build.sh clean', 'bash build.sh clean', { timeoutMs: 2 * 60 * 1000, cwd });
+        if (!ok) throw new Error('Очистка не завершилась');
+        setArtifact('');
         setResultState('success');
         return;
       }
-      if (selected === 'build') {
-        // Только Vite (быстро) — как просили, без APK
-        await runInTerminal('install vite (если нужно)', '[ -f node_modules/.bin/vite ] || npm install --silent 2>&1 | tail -10', { timeoutMs: 10 * 60 * 1000, cwd });
-        const okBuild = await runInTerminal('vite build', 'npm run build 2>&1', { timeoutMs: 20 * 60 * 1000, cwd });
-        if (!okBuild) throw new Error('vite build не завершился — смотрите терминал');
-        // Копируем в android/assets
-        await runInTerminal('cp dist → android/assets', 'mkdir -p android/app/src/main/assets && rm -rf android/app/src/main/assets/* && cp -r dist/* android/app/src/main/assets/ 2>/dev/null; ls -lh dist/index.html 2>&1 | head -1', { timeoutMs: 60000, cwd });
-        const probe = await execute('ls -lh dist/index.html 2>/dev/null && echo FOUND || echo MISSING', cwd);
-        if (/FOUND/.test(probe.output || '')) setArtifact(`${cwd}/dist`);
-        setResultState('success'); addWorkspaceLog(`vite build: ${copy.success}`, 'success');
-      } else if (selected === 'android') {
-        // Полный APK/AAB пайплайн в ТЕРМИНАЛЕ: подготовка → npm install → vite build → gradle.
-        const gradleTask = variant === 'aab' ? 'bundleRelease' : variant === 'release' ? 'assembleRelease' : 'assembleDebug';
-        const label = variant === 'aab' ? 'AAB (bundleRelease)' : `APK ${variant.toUpperCase()}`;
+      if (selected === 'keystore') {
+        const ok = await runInTerminal('build.sh keystore (storm keygen)', 'bash build.sh keystore', { timeoutMs: 5 * 60 * 1000, cwd });
+        if (!ok) throw new Error('Не удалось создать keystore');
+        setResultState('success');
+        return;
+      }
 
-        // Шаг 1. Обновляем android-скелет проекта из текущего шаблона конструктора
-        // (MainActivity на WebViewAssetLoader, зависимости, иконки, скрипты) — так
-        // старые проекты получают исправления автоматически, без пересоздания.
-        // Пользовательский код (src/*) и подпись при этом не трогаются.
-        try {
-          // Самолечение: восстанавливаем отсутствующие файлы шаблона (прерванное
-          // создание, случайное удаление) — существующие файлы не трогаются.
-          const integ = await ensureProjectIntegrity(currentProject);
-          if (integ?.restored?.length) append(`✓ Восстановлены файлы проекта: ${integ.restored.join(', ')}`, 'warning');
-          // Убираем MainActivity по старому package-пути (если пакет меняли в настройках).
-          await execute('rm -rf android/app/src/main/java', cwd);
-          const rr = await refreshAndroidScaffold(currentProject);
-          append(rr?.success ? `✓ ${rr.output || 'Android-шаблон обновлён'}` : `⚠ ${rr?.output || 'не удалось обновить android-шаблон'}`, rr?.success ? 'success' : 'warning');
-        } catch (e) {
-          append(`⚠ не удалось обновить android-шаблон: ${e?.message || String(e)}`, 'warning');
+      // Шаг 1. Синхронизация исходников на диск (макеты + Activity + манифест).
+      try {
+        const integ = await ensureJavaProjectIntegrity(currentProject);
+        if (integ?.restored?.length) append(`✓ Восстановлены файлы проекта: ${integ.restored.join(', ')}`, 'warning');
+        const sync = await syncJavaProject(currentProject);
+        append(sync?.success ? `✓ ${sync.output}` : `⚠ ${sync?.output || 'синхронизация не удалась'}`, sync?.success ? 'success' : 'warning');
+        const rf = await refreshJavaScaffold(currentProject);
+        if (rf?.success) append('✓ Сборщик актуален (build.sh)', 'info');
+      } catch (e) {
+        append(`⚠ не удалось синхронизировать исходники: ${e?.message || String(e)}`, 'warning');
+      }
+
+      // Шаг 2. Окружение: JDK + build-tools + платформа (без сети).
+      const env = await checkBuildEnv();
+      String(env.output || '').split('\n').filter(Boolean).forEach((l) => append(l, 'info'));
+      if (!env.ok) {
+        env.problems.forEach((p) => append(`⚠ ${p}`, 'error'));
+        throw new Error('Окружение не готово — откройте страницу установки среды');
+      }
+
+      // Шаг 3. Кастомная сборка (без Gradle) — пайплайн выполняет Storm Build.
+      const label = selected === 'release' ? 'Release APK (Storm Build)' : selected === 'aab' ? 'AAB (Storm Build)' : 'Debug APK (Storm Build)';
+      const ok = await runInTerminal(label, `bash build.sh ${selected}`, { timeoutMs: 30 * 60 * 1000, cwd });
+      if (!ok) throw new Error('Сборка не завершилась — смотрите терминал');
+
+      // Шаг 4. Артефакт: найти, проверить (aapt2), экспортировать в Загрузки.
+      const slug = String(currentProject.slug || slugifyProject(currentProject.name || 'app') || 'app').replace(/[^a-z0-9-]/g, '-');
+      const ext = selected === 'aab' ? 'aab' : 'apk';
+      const probe = await execute(`find build/outputs -name '*.${ext}' 2>/dev/null | head -1`, cwd);
+      const outPath = String(probe.output || '').trim();
+      if (outPath) {
+        const absArtifact = outPath.startsWith('/') ? outPath : `${cwd}/${outPath}`;
+        setArtifact(absArtifact);
+        sayInTerminal(`✅ ${ext.toUpperCase()}: ${absArtifact}`);
+        if (ext === 'apk') {
+        await runInTerminal('проверка артефакта (aapt2)',
+          `SDK="\${ANDROID_HOME:-$HOME/android-sdk}"; BT=$(ls "$SDK/build-tools" 2>/dev/null | grep -E '^[0-9]' | sort -V | tail -1);` +
+          `if [ -x "$SDK/build-tools/$BT/aapt2" ]; then "$SDK/build-tools/$BT/aapt2" dump badging ${shellQuote(absArtifact)} 2>/dev/null | grep -E '^(package|application-label|sdkVersion|targetSdkVersion|launchable-activity):' | head -7 || echo 'aapt2 не смог разобрать файл'; ` +
+          `else echo 'aapt2 не найден — пропускаю проверку'; fi`,
+          { timeoutMs: 60000, cwd });
         }
-
-        // Шаг 2. Автоподготовка (Gradle Wrapper, SDK, local.properties) — отдельная кнопка
-        // Prepare больше не нужна: prepare.sh идемпотентен и быстро пропускает уже готовые
-        // шаги. Предупреждения подготовки не останавливают сборку — судьбу решает Gradle.
-        const okPrep = await runInTerminal('prepare.sh — подготовка проекта (авто)', '([ -f prepare.sh ] && bash prepare.sh) || echo "prepare.sh не найден — пропускаю подготовку"', { timeoutMs: 30 * 60 * 1000, cwd });
-        if (!okPrep) append('⚠ Подготовка завершилась с предупреждением — продолжаю сборку', 'warning');
-
-        // Шаг 3. Сборка: npm install → vite build → dist в assets → gradle.
-        const ok = await runInTerminal(
-          label,
-          `( [ -f node_modules/.bin/vite ] || npm install --silent 2>&1 | tail -10 ) && npm run build 2>&1 &&` +
-          `mkdir -p android/app/src/main/assets && rm -rf android/app/src/main/assets/* && cp -r dist/* android/app/src/main/assets/ 2>/dev/null &&` +
-          `cd android && ./gradlew ${gradleTask} --no-daemon --console=plain --warning-mode=none 2>&1`,
-          { timeoutMs: 120 * 60 * 1000, cwd }
-        );
-        if (!ok) throw new Error('Сборка не завершилась — смотрите терминал');
-
-        // Ищем APK или AAB
-        const sub = variant === 'aab' ? 'bundle/release' : `apk/${variant === 'release' ? 'release' : 'debug'}`;
-        const ext = variant === 'aab' ? 'aab' : 'apk';
-        const probe = await execute(`find android/app/build/outputs/${sub} -name '*.${ext}' 2>/dev/null | head -1`, cwd);
-        const outPath = String(probe.output || '').trim();
-        if (outPath) {
-          const absArtifact = outPath.startsWith('/') ? outPath : `${cwd}/${outPath}`;
-          setArtifact(absArtifact);
-          sayInTerminal(`✅ ${variant === 'aab' ? 'AAB' : 'APK'}: ${outPath}`);
-          // Проверка артефакта: aapt2 разбирает APK лучше любого инсталлятора —
-          // если файл повреждён (Xiaomi/Samsung «не открывается»), узнаем сразу.
-          await runInTerminal('проверка артефакта (aapt2)',
-            `SDK="$ANDROID_HOME"; [ -n "$SDK" ] || SDK="$HOME/android-sdk"; BT=$(ls "$SDK/build-tools" 2>/dev/null | grep -E '^[0-9]' | sort -V | tail -1);` +
-            `if [ -x "$SDK/build-tools/$BT/aapt2" ]; then "$SDK/build-tools/$BT/aapt2" dump badging ${shellQuote(absArtifact)} 2>/dev/null | grep -E '^(package|application-label|sdkVersion|targetSdkVersion|native-code):' | head -7 || echo 'aapt2 не смог разобрать файл — APK повреждён?';` +
-            `else echo 'aapt2 не найден — пропускаю проверку'; fi`,
-            { timeoutMs: 60000, cwd });
-          // Экспорт в общую папку: Загрузки → NovaCompose → <Проект> → apk.
-          const slugName = slugifyProject(currentProject.name || 'app') || 'app';
-          const artifactFile = `${slugName}-v${currentProject.versionName || '1.0.0'}-${variant}.${ext}`;
-          const exportDir = `/sdcard/Download/NovaCompose/${currentProject.name || slugName}/apk`;
-          const okExport = await runInTerminal('экспорт в Загрузки',
-            `DEST=${shellQuote(exportDir)}; mkdir -p "$DEST" 2>/dev/null && cp -f ${shellQuote(absArtifact)} "$DEST/${artifactFile}" && ls -lh "$DEST/${artifactFile}"`,
-            { timeoutMs: 60000, cwd });
-          if (okExport) { append(`✓ Экспортировано: ${exportDir}/${artifactFile}`, 'success'); addWorkspaceLog(`APK экспортирован: ${exportDir}/${artifactFile}`, 'success'); }
-          else append(`⚠ Не удалось записать в ${exportDir} — проверьте доступ к хранилищу (APK остался в папке проекта)`, 'warning');
-          setResultState('success'); addWorkspaceLog(`${variant} ${variant === 'aab' ? 'aab' : 'apk'}: ${copy.success}`, 'success');
-        } else {
-          // Артефакта нет — не притворяемся успехом и не показываем кнопку установки.
-          setArtifact('');
-          sayInTerminal('❌ Сборка завершилась, но файл артефакта не найден — проверьте терминал');
-          setResultState('error');
-          const msg = ru ? 'Сборка завершилась, но файл артефакта не найден — проверьте терминал' : 'Build finished but the artifact file was not found — check the terminal';
-          addWorkspaceLog(msg, 'error'); append(`✗ ${msg}`, 'error');
-        }
+        const artifactFile = `${slug}-v${currentProject.versionName || '1.0.0'}-${selected}.${ext}`;
+        const exportDir = `/sdcard/Download/NovaJava/${currentProject.name || slug}/apk`;
+        const okExport = await runInTerminal('экспорт в Загрузки',
+          `DEST=${shellQuote(exportDir)}; mkdir -p "$DEST" 2>/dev/null && cp -f ${shellQuote(absArtifact)} "$DEST/${artifactFile}" && ls -lh "$DEST/${artifactFile}"`,
+          { timeoutMs: 60000, cwd });
+        if (okExport) { append(`✓ Экспортировано: ${exportDir}/${artifactFile}`, 'success'); addWorkspaceLog(`${ext.toUpperCase()} экспортирован: ${exportDir}/${artifactFile}`, 'success'); }
+        else append(`⚠ Не удалось записать в ${exportDir} — артефакт остался в папке проекта`, 'warning');
+        setResultState('success'); addWorkspaceLog(`${selected} ${ext}: ${copy.success}`, 'success');
+      } else {
+        setArtifact('');
+        sayInTerminal(`❌ Сборка завершилась, но ${ext.toUpperCase()} не найден — проверьте терминал`);
+        setResultState('error');
+        const msg = ru ? `Сборка завершилась, но файл ${ext.toUpperCase()} не найден — проверьте терминал` : `Build finished but the ${ext.toUpperCase()} file was not found — check the terminal`;
+        addWorkspaceLog(msg, 'error'); append(`✗ ${msg}`, 'error');
       }
     } catch (e) { append(e?.message || String(e), 'error'); setResultState('error'); addWorkspaceLog(String(e), 'error'); }
     finally {
@@ -310,10 +257,7 @@ const BuildScreen = ({ navigation }) => {
   };
 
   const installDebug = async () => {
-    // RuStore: REQUEST_INSTALL_PACKAGES удалён, поэтому прямая установка
-    // из приложения невозможна. Пробуем apt.installApk (откроет chooser),
-    // при ошибке — предлагаем «Поделиться» и показываем путь в Загрузки.
-    const path = artifact && artifact.endsWith('.apk') ? artifact : `${getProjectDir(currentProject)}/android/app/build/outputs/apk/debug/app-debug.apk`;
+    const path = artifact && artifact.endsWith('.apk') ? artifact : `${getProjectDir(currentProject)}/build/outputs/app-debug.apk`;
     let probe;
     try { probe = await execute(`test -s '${path}' && echo FOUND || echo MISSING`); } catch (e) { probe = null; }
     if (!/FOUND/.test(probe?.output || '')) {
@@ -324,53 +268,40 @@ const BuildScreen = ({ navigation }) => {
     append(`$ install ${path}`, 'command');
     const r = await apt.installApk?.(path);
     if (r?.success) {
-      append(ru ? `Запрос на открытие APK отправлен: ${r.output || path}` : `Open APK requested: ${r.output || path}`, 'success');
+      append(ru ? `Запрос на установку APK отправлен: ${r.output || path}` : `Install APK requested: ${r.output || path}`, 'success');
+      // Сразу предложим запустить приложение после установки
+      if (currentProject?.packageName) {
+        setTimeout(async () => {
+          const lr = await apt.launchPackage?.(currentProject.packageName);
+          if (lr?.success) append(ru ? 'Приложение запущено' : 'App launched', 'success');
+        }, 2500);
+      }
       return;
     }
-    // Ошибка — для RuStore показываем дружелюбную инструкцию + Share
-    const errText = r?.output || (ru ? 'Прямая установка отключена для RuStore' : 'Direct install disabled for RuStore');
-    append(`✗ ${errText}`, 'error');
-    // APK уже экспортирован в /sdcard/Download/NovaCompose/... — предлагаем поделиться
-    const exportHint = ru
-      ? `APK сохранён в Загрузки/NovaCompose/${currentProject.name}/apk — откройте его через системный файловый менеджер для установки.`
-      : `APK exported to Downloads/NovaCompose/${currentProject.name}/apk — open it via system file manager to install.`;
-    append(exportHint, 'warning');
-    addWorkspaceLog(`${errText}\n${exportHint}`, 'warning');
-    // Пробуем системный Share (пользователь выберет файловый менеджер / Telegram / Drive)
+    append(ru ? `Не удалось установить автоматически — файл: ${path}` : `Auto-install failed — file: ${path}`, 'warning');
+  };
+
+  const shareJournal = async () => {
     try {
-      await Share.share({ message: ru ? `APK: ${path}` : `APK: ${path}`, title: ru ? 'Поделиться APK' : 'Share APK' });
+      const text = logs.map(l => l.text).join('\n') || 'Build log is empty';
+      await Share.share({ title: 'NovaJava build log', message: text });
     } catch (_) {}
   };
 
-  // «Журнал» — расшарить ПОЛНЫЙ вывод сборки. Весь вывод идёт в нативный терминал,
-  // поэтому в первую очередь забираем его транскрипт (весь скроллбэк), а state-массив
-  // logs и build.log — только запасные варианты.
-  const shareJournal = async () => {
-    let text = '';
-    try {
-      const t = await terminalRef.current?.getTranscriptText?.();
-      if (t && String(t).trim()) text = String(t).trim();
-    } catch (e) {}
-    if (!text) text = logs.map(l => l.text).join('\n').trim();
-    if (!text) {
-      try {
-        const cwd = getProjectDir(currentProject);
-        const f = await execute('cat build.log 2>/dev/null', cwd);
-        if (f?.output && f.output.trim()) text = `=== build.log (${cwd}/build.log) ===\n${f.output}`;
-      } catch (e) {}
-    }
-    if (!text) text = ru ? '(журнал пуст — запустите сборку)' : '(log empty — run a build)';
-    try { await Share.share({ message: text, title: ru ? 'Журнал сборки' : 'Build log' }); }
-    catch (e) { append(`${ru ? 'Не удалось открыть' : 'Share failed'}: ${e?.message || e}`, 'error'); }
-  };
-
-  if (!currentProject) return <AppScreen><TopBar title={copy.title} onBack={() => navigation.goBack()} /><View style={styles.empty}><Icon name="logo-react" size={40} color={colors.textTertiary} /><Text style={styles.muted}>{copy.noProject}</Text></View></AppScreen>;
-
   const cur = tasks[task];
+
+  if (!currentProject) {
+    return (
+      <AppScreen>
+        <TopBar title={copy.title} subtitle={copy.subtitle} navigation={navigation} />
+        <View style={styles.empty}><Icon name="hammer-outline" size={34} color={colors.textTertiary} /><Text style={styles.muted}>{copy.noProject}</Text></View>
+      </AppScreen>
+    );
+  }
 
   return (
     <AppScreen>
-      <TopBar title={copy.title} subtitle={`${currentProject.name} · ${copy.subtitle}`} onBack={() => navigation.goBack()} right={<IconButton name="options-outline" label={width >= 720 ? 'Настройки' : null} onPress={() => navigation.navigate('ProjectSettings')} />} />
+      <TopBar title={copy.title} subtitle={copy.subtitle} navigation={navigation} />
       <View style={[styles.main, !desktop && styles.mainMobile]}>
         <ScrollView style={[styles.settingsPane, !desktop && styles.settingsMobile]} contentContainerStyle={styles.settingsContent}>
           <SectionCard title={copy.choose} icon="hammer-outline">
@@ -379,7 +310,7 @@ const BuildScreen = ({ navigation }) => {
               <View style={styles.taskIcon}><Icon name={cur.icon} size={23} color={colors.primary} /></View>
               <View style={{ flex: 1, minWidth: 0, flexShrink: 1 }}>
                 <Text style={styles.taskTitle} numberOfLines={1}>{cur.label}</Text>
-                <Text style={styles.taskMeta} numberOfLines={1}>{task === 'android' ? (variant === 'aab' ? 'bundleRelease' : variant === 'release' ? 'assembleRelease' : 'assembleDebug') : cur.cmd}</Text>
+                <Text style={styles.taskMeta} numberOfLines={1}>{cur.cmd}</Text>
                 <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10, marginTop: 2 }}>{cur.desc}</Text>
               </View>
               <View style={{ flexShrink: 0 }}>
@@ -387,28 +318,14 @@ const BuildScreen = ({ navigation }) => {
               </View>
             </View>
           </SectionCard>
-          {task === 'android' ? (
-            <SectionCard title={ru ? 'Тип сборки' : 'Build type'} icon={variant === 'aab' ? 'cube-outline' : variant === 'release' ? 'lock-closed-outline' : 'bug-outline'}>
-              <OptionPicker value={variant} onChange={setVariant} grid={useGridPicker} colors={colors} options={[
-                { value: 'debug', label: 'Debug', icon: 'bug-outline' },
-                { value: 'release', label: 'Release', icon: 'lock-closed-outline' },
-                { value: 'aab', label: 'AAB', icon: 'cube-outline' },
-              ]} />
-              <Text style={{ color: colors.textSecondary, fontSize: 10, lineHeight: 15, marginTop: 6 }}>
-                {variant === 'aab'
-                  ? (ru ? 'AAB: bundleRelease для Google Play (подпись из keystore.properties).' : 'AAB: bundleRelease for Google Play (signed via keystore.properties).')
-                  : variant === 'release'
-                    ? (ru ? 'Release: R8 + minify + подпись. Нужен keystore.properties; иначе APK будет неподписан.' : 'Release: R8 + minify + signing. Needs keystore.properties; otherwise unsigned APK.')
-                    : (ru ? 'Debug: app-debug.apk с debug-keystore. Подходит для установки и теста.' : 'Debug: app-debug.apk with debug keystore. Good for install & test.')}
-              </Text>
-            </SectionCard>
-          ) : null}
           <View style={styles.note}><Icon name="information-circle-outline" size={17} color={colors.info} /><Text style={styles.noteText}>{copy.note}</Text></View>
-          <View style={{ flexDirection: stackButtons ? 'column' : 'row', gap: 8 }}>
-            <PrimaryButton title={running ? copy.running : (task === 'android' ? `${copy.run} · ${variant === 'aab' ? 'AAB' : variant === 'release' ? 'Release' : 'Debug'}` : copy.run)} icon="hammer-outline" loading={running} onPress={() => run()} style={stackButtons ? { width: '100%' } : { flex: 1 }} />
-            <IconButton name="shield-checkmark-outline" label="Prepare" loading={running} onPress={runPrepare} style={stackButtons ? { width: '100%' } : { flex: 1 }} />
-          </View>
-          <IconButton name="trash-outline" label={copy.clean} disabled={running} onPress={async () => { await execute('rm -rf dist android/app/src/main/assets/* android/app/build 2>/dev/null; echo cleaned', getProjectDir(currentProject)); append('cleaned', 'info'); }} />
+          <PrimaryButton title={running ? copy.running : copy.run} icon="hammer-outline" loading={running} onPress={() => run()} style={{ width: '100%' }} />
+          <IconButton name="flash-outline" label={ru ? 'Быстрая проверка окружения' : 'Quick env check'} disabled={running} onPress={async () => {
+            const env = await checkBuildEnv();
+            String(env.output || '').split('\n').filter(Boolean).forEach((l) => append(l, 'info'));
+            if (env.ok) append('✓ окружение готово к сборке', 'success');
+            else env.problems.forEach((p) => append(`⚠ ${p}`, 'warning'));
+          }} />
         </ScrollView>
         <View style={[styles.consoleWrap, !desktop && styles.consoleMobile]}>
           <View style={styles.consoleHead}>{narrow ? null : <View style={styles.dots}><View style={[styles.dot, { backgroundColor: '#F87171' }]} /><View style={[styles.dot, { backgroundColor: '#FBBF24' }]} /><View style={[styles.dot, { backgroundColor: '#34D399' }]} /></View>}<Text style={styles.consoleTitle} numberOfLines={1}>{copy.terminal}</Text><View style={{ flex: 1 }} />
@@ -427,13 +344,13 @@ const BuildScreen = ({ navigation }) => {
                 extraKeys={EXTRA_KEYS}
                 readOnly
                 workingDirectory={getProjectDir(currentProject)}
-                initialCommand={ru ? 'echo "Сборка: ' + currentProject.name + ' (proot). Нажмите «Запустить»."' : 'echo "Build: ' + currentProject.name + ' (proot). Press Run."'}
+                initialCommand={ru ? 'echo "Кастомная сборка: ' + currentProject.name + ' (без Gradle). Нажмите «Запустить»."' : 'echo "Custom build: ' + currentProject.name + ' (no Gradle). Press Run."'}
                 onTerminalEvent={onTerminalEvent}
               />
             </View>
           ) : (
             <ScrollView ref={scrollRef} style={styles.console} contentContainerStyle={styles.consoleContent} onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}>
-              {!logs.length ? <View style={styles.consoleEmpty}><Icon name="logo-react" size={30} color="#526079" /><Text style={styles.consoleEmptyText}>{cur.cmd}</Text></View> : logs.map(l => <Text selectable key={l.id} style={[styles.log, l.level === 'command' && styles.command, l.level === 'success' && styles.success, l.level === 'error' && styles.error, l.level === 'warning' && styles.warning]}>{l.text}</Text>)}
+              {!logs.length ? <View style={styles.consoleEmpty}><Icon name="logo-android" size={30} color="#526079" /><Text style={styles.consoleEmptyText}>{cur.cmd}</Text></View> : logs.map(l => <Text selectable key={l.id} style={[styles.log, l.level === 'command' && styles.command, l.level === 'success' && styles.success, l.level === 'error' && styles.error, l.level === 'warning' && styles.warning]}>{l.text}</Text>)}
             </ScrollView>
           )}
           {artifact ? <View style={styles.artifactBar}><Icon name="cube-outline" size={20} color={colors.success} /><View style={{ flex: 1, minWidth: 0 }}><Text style={styles.artifactLabel}>{copy.artifact}</Text><Text style={styles.artifactPath} numberOfLines={1}>{artifact}</Text></View><PrimaryButton title={narrow ? '' : copy.install} icon="download-outline" disabled={!artifact.endsWith('.apk')} onPress={installDebug} style={narrow ? { width: 46, paddingHorizontal: 0 } : null} /></View> : null}
@@ -465,8 +382,6 @@ const createStyles = c => StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4 },
   consoleTitle: { color: '#D6DEEB', fontSize: 11, fontWeight: '700', flexShrink: 1 },
   clear: { padding: 7 },
-  // Отступ слева/справа: строки терминала не рисуются впритык к краю экрана
-  // (на телефоне без этого первые символы строк срезаются скруглением).
   consoleTerminalWrap: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: c.terminal, paddingHorizontal: 10 },
   consoleTerminal: { flex: 1, backgroundColor: c.terminal },
   console: { flex: 1 },

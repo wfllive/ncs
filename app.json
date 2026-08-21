@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "NovaCompose Studio",
-    "slug": "novacompose-studio",
+    "name": "NovaJava Studio",
+    "slug": "novajava-studio",
     "version": "1.0.1",
     "orientation": "default",
     "icon": "./assets/icon.png",

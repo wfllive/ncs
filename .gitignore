@@ -8,3 +8,7 @@ android/local.properties
 *.jks
 keystore.properties
 *.log
+
+# Python-кэш вендоренного сборщика (появляется от тестов)
+storm/**/__pycache__/
+*.pyc

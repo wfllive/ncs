@@ -9,66 +9,57 @@ import { getProjectDir } from '../config/runtime';
 import { syncComposeProject } from '../utils/composeProject';
 import { cn } from "../utils/cn";
 const catalog = [{
-  coordinate: 'react-router-dom@^6.26.0',
-  icon: 'git-branch-outline',
-  category: 'Routing',
-  ru: 'Роутер для React',
-  en: 'Router for React'
+  coordinate: 'androidx.appcompat:appcompat:1.6.1',
+  icon: 'phone-portrait-outline',
+  category: 'UI',
+  ru: 'AppCompat: совместимость старых версий',
+  en: 'AppCompat: backward compatibility'
 }, {
-  coordinate: 'zustand@^4.5.0',
-  icon: 'layers-outline',
-  category: 'State',
-  ru: 'Управление состоянием',
-  en: 'State management'
+  coordinate: 'androidx.core:core:1.12.0',
+  icon: 'cube-outline',
+  category: 'Utils',
+  ru: 'AndroidX Core: современные API',
+  en: 'AndroidX Core: modern APIs'
 }, {
-  coordinate: 'axios@^1.7.0',
+  coordinate: 'com.google.android.material:material:1.11.0',
+  icon: 'color-palette-outline',
+  category: 'UI',
+  ru: 'Material Components (кнопки, поля…)',
+  en: 'Material Components (buttons, fields…)'
+}, {
+  coordinate: 'androidx.constraintlayout:constraintlayout:2.1.4',
+  icon: 'grid-outline',
+  category: 'UI',
+  ru: 'ConstraintLayout: гибкие макеты',
+  en: 'ConstraintLayout: flexible layouts'
+}, {
+  coordinate: 'androidx.recyclerview:recyclerview:1.3.2',
+  icon: 'list-outline',
+  category: 'UI',
+  ru: 'RecyclerView: списки',
+  en: 'RecyclerView: lists'
+}, {
+  coordinate: 'com.squareup.okhttp3:okhttp:4.12.0',
   icon: 'swap-horizontal-outline',
   category: 'Network',
-  ru: 'HTTP клиент',
-  en: 'HTTP client'
+  ru: 'OkHttp: HTTP-клиент',
+  en: 'OkHttp: HTTP client'
 }, {
-  coordinate: '@tanstack/react-query@^5.0.0',
-  icon: 'sync-outline',
-  category: 'Network',
-  ru: 'Кэширование запросов',
-  en: 'Query caching'
-}, {
-  coordinate: 'react-hook-form@^7.0.0',
-  icon: 'create-outline',
-  category: 'UI',
-  ru: 'Формы React',
-  en: 'React forms'
-}, {
-  coordinate: 'framer-motion@^11.0.0',
-  icon: 'color-wand-outline',
-  category: 'UI',
-  ru: 'Анимации',
-  en: 'Animations'
-}, {
-  coordinate: 'dayjs@^1.11.0',
-  icon: 'calendar-outline',
+  coordinate: 'com.google.code.gson:gson:2.10.1',
+  icon: 'braces-outline',
   category: 'Utils',
-  ru: 'Дата/время',
-  en: 'Date/time'
+  ru: 'Gson: JSON (де)сериализация',
+  en: 'Gson: JSON (de)serialization'
 }, {
-  coordinate: 'lodash@^4.17.0',
-  icon: 'code-slash-outline',
-  category: 'Utils',
-  ru: 'Утилиты',
-  en: 'Utilities'
+  coordinate: 'com.yandex.android:mobileads:8.2.0',
+  icon: 'megaphone-outline',
+  category: 'Ads',
+  ru: 'Yandex Mobile Ads (баннеры, interstitial)',
+  en: 'Yandex Mobile Ads (banners, interstitial)'
 }];
-const categories = ['All', 'UI', 'Routing', 'State', 'Network', 'Utils'];
-const validNpm = value => /^(@[a-z0-9-]+\/)?[a-z0-9-]+(@.+)?$/i.test(value.trim());
-const getNpmPackageName = (value = '') => {
-  const trimmed = value.trim();
-  if (!trimmed) return '';
-  if (trimmed.startsWith('@')) {
-    const slashIndex = trimmed.indexOf('/');
-    const versionAtIndex = trimmed.indexOf('@', slashIndex + 1);
-    return versionAtIndex === -1 ? trimmed : trimmed.slice(0, versionAtIndex);
-  }
-  return trimmed.split('@')[0];
-};
+const categories = ['All', 'UI', 'Network', 'Utils', 'Ads'];
+// Maven-координата: group:artifact[:version] (версию можно не указывать — добавим последнюю).
+const validCoordinate = value => /^[a-z0-9_.-]+:[a-z0-9_.-]+(:[a-z0-9_.-]+)?$/i.test(value.trim());
 const LibrariesScreen = ({
   navigation
 }) => {
@@ -99,75 +90,83 @@ const LibrariesScreen = ({
     isSmallPhone
   }), [colors, isPhone, isSmallPhone]);
   const copy = language === 'ru' ? {
-    title: 'npm зависимости',
-    subtitle: 'package.json · React + Vite',
+    title: 'Библиотеки (Maven)',
+    subtitle: 'storm.m · Storm Build',
     catalog: 'Каталог',
-    installed: 'Установлены',
-    search: 'Поиск npm пакетов',
-    custom: 'package@version',
-    add: 'Установить',
+    installed: 'Подключены',
+    search: 'Поиск библиотек',
+    custom: 'group:artifact:version',
+    add: 'Подключить',
     remove: 'Удалить',
-    declared: 'В package.json',
-    cached: 'Установлен',
-    unresolved: 'Не установлен',
-    refresh: 'Проверить node_modules',
-    resolve: 'Установить всё (npm install)',
-    invalid: 'Введите npm пакет: name или name@version',
-    noProject: 'Сначала откройте React проект.',
-    removeTitle: 'Удалить пакет?',
-    removeText: 'Зависимость будет удалена из package.json.',
-    empty: 'Дополнительные зависимости не установлены'
+    declared: 'В storm.m',
+    cached: 'Загружена',
+    unresolved: 'Не загружена',
+    refresh: 'Проверить storm.lock',
+    resolve: 'Загрузить всё (storm deps fetch)',
+    invalid: 'Введите координату Maven: group:artifact или group:artifact:version',
+    noProject: 'Сначала откройте проект.',
+    removeTitle: 'Удалить библиотеку?',
+    removeText: 'Зависимость будет удалена из storm.m.',
+    empty: 'Библиотеки не подключены'
   } : {
-    title: 'npm dependencies',
-    subtitle: 'package.json · React + Vite',
+    title: 'Libraries (Maven)',
+    subtitle: 'storm.m · Storm Build',
     catalog: 'Catalog',
     installed: 'Installed',
-    search: 'Search npm packages',
-    custom: 'package@version',
-    add: 'Install',
+    search: 'Search libraries',
+    custom: 'group:artifact:version',
+    add: 'Add',
     remove: 'Remove',
-    declared: 'In package.json',
-    cached: 'Installed',
-    unresolved: 'Not installed',
-    refresh: 'Check node_modules',
-    resolve: 'Install all (npm install)',
-    invalid: 'Enter npm package: name or name@version',
-    noProject: 'Open a React project first.',
-    removeTitle: 'Remove package?',
-    removeText: 'Dependency will be removed from package.json.',
-    empty: 'No additional dependencies installed'
+    declared: 'In storm.m',
+    cached: 'Downloaded',
+    unresolved: 'Not downloaded',
+    refresh: 'Check storm.lock',
+    resolve: 'Fetch all (storm deps fetch)',
+    invalid: 'Enter Maven coordinate: group:artifact or group:artifact:version',
+    noProject: 'Open a project first.',
+    removeTitle: 'Remove library?',
+    removeText: 'Dependency will be removed from storm.m.',
+    empty: 'No libraries connected'
   };
-  const declared = currentProject?.gradleDependencies || currentProject?.dependencies || [];
+const dir = currentProject ? getProjectDir(currentProject) : '';
+  // Зависимости живут в storm.m (блок dependencies { … }); storm.lock — маркер загрузки.
+  const readDeclared = useCallback(async () => {
+    if (!dir) return [];
+    const r = await execute(
+      'awk \'/dependencies[[:space:]]*\\{/{f=1;next} f&&/\\}/{f=0} f\' storm.m 2>/dev/null | ' +
+      'sed -e \'s/#.*//\' -e \'s/^[[:space:]]*implementation[[:space:]]*//\' | ' +
+      'grep -E \'^[a-zA-Z0-9_.-]+:[a-zA-Z0-9_.-]+\' || true', dir);
+    return String(r?.output || '').split('\n').map(x => x.trim()).filter(Boolean);
+  }, [dir]);
+  const [declared, setDeclared] = useState([]);
   const declaredKey = declared.join('|');
   const checkCache = useCallback(async () => {
-    if (!currentProject) return;
+    if (!dir) return;
     const next = {};
+    const lock = await execute('[ -f storm.lock ] && cat storm.lock 2>/dev/null || true', dir);
+    const lockText = String(lock?.output || '');
     for (const dep of declared) {
-      const pkgName = getNpmPackageName(dep);
-      const result = await execute(`[ -d "node_modules/${pkgName}" ] && printf yes || true`, getProjectDir(currentProject));
-      next[dep] = result.output?.includes('yes');
+      const ga = dep.split(':').slice(0, 2).join(':');
+      next[dep] = lockText.includes(ga);
     }
     setResolved(next);
-  }, [currentProject, declaredKey]);
+  }, [dir, declaredKey]); // eslint-disable-line
+  useEffect(() => {
+    (async () => {
+      const list = await readDeclared();
+      setDeclared(list);
+    })();
+  }, [readDeclared]);
   useEffect(() => {
     checkCache();
   }, [checkCache]);
-  const updateDependencies = async nextDependencies => {
-    if (!currentProject) return null;
-    const updated = {
-      ...currentProject,
-      gradleDependencies: nextDependencies,
-      dependencies: nextDependencies,
-      updatedAt: Date.now()
-    };
+  const syncMeta = async (nextDependencies) => {
+    // Дублируем список в метаданные проекта (для офлайн-карточек).
+    if (!currentProject) return;
     dispatch({
       type: 'UPDATE_PROJECT',
-      payload: updated
+      payload: { ...currentProject, gradleDependencies: nextDependencies, dependencies: nextDependencies, updatedAt: Date.now() }
     });
-    await syncComposeProject(updated).catch(() => ({
-      success: true
-    }));
-    return updated;
   };
   const add = async coordinate => {
     if (!currentProject) {
@@ -175,21 +174,21 @@ const LibrariesScreen = ({
       return;
     }
     const value = coordinate.trim();
-    if (!validNpm(value)) {
+    if (!validCoordinate(value)) {
       Alert.alert(copy.invalid);
       return;
     }
-    if (declared.includes(value)) return;
+    if (declared.some(d => d.startsWith(value.split(':').slice(0, 2).join(':')))) return;
     setBusy(value);
     setError('');
     try {
-      await updateDependencies([...declared, value]);
-      const dir = getProjectDir(currentProject);
-      const r = await execute(`npm install ${value} --save 2>&1 | tail -20`, dir);
-      if (!r.success && !/added|up to date/i.test(r.output || '')) {
-        throw new Error(r.output?.slice(0, 800) || 'npm install failed');
-      }
+      const r = await execute(`storm deps add ${JSON.stringify(value)} 2>&1 | tail -25; echo DEPS_EXIT:$?`, dir);
+      const out = String(r?.output || '');
+      if (!/DEPS_EXIT:0/.test(out)) throw new Error(out.replace(/DEPS_EXIT:\d+/, '').slice(-800) || 'storm deps add failed');
       setCustom('');
+      const list = await readDeclared();
+      setDeclared(list);
+      await syncMeta(list);
       await checkCache();
     } catch (err) {
       setError(err?.message || String(err));
@@ -201,17 +200,18 @@ const LibrariesScreen = ({
     text: t('cancel'),
     style: 'cancel'
   }, {
-    text: copy.remove,
+    text: t('delete'),
     style: 'destructive',
     onPress: async () => {
       if (!currentProject) return;
       setBusy(coordinate);
       setError('');
       try {
-        await updateDependencies(declared.filter(item => item !== coordinate));
-        const dir = getProjectDir(currentProject);
-        const pkgName = getNpmPackageName(coordinate);
-        await execute(`npm uninstall ${pkgName} 2>&1 | tail -10`, dir);
+        const ga = coordinate.split(':').slice(0, 2).join(':');
+        await execute(`sed -i '\\#${ga.replace(/\./g, '\\.')}#d' storm.m 2>/dev/null || true`, dir);
+        const list = await readDeclared();
+        setDeclared(list);
+        await syncMeta(list);
         await checkCache();
       } catch (err) {
         setError(err?.message || String(err));
@@ -224,12 +224,16 @@ const LibrariesScreen = ({
     if (!currentProject) return;
     setBusy('resolve');
     setError('');
-    const result = await execute('npm install 2>&1 | tail -30', getProjectDir(currentProject));
-    if (!result.success && !/up to date|added/i.test(result.output || '')) {
-      setError(result.output || 'npm install failed');
+    try {
+      const r = await execute('storm deps fetch 2>&1 | tail -30; echo DEPS_EXIT:$?', dir);
+      const out = String(r?.output || '');
+      if (!/DEPS_EXIT:0/.test(out)) throw new Error(out.replace(/DEPS_EXIT:\d+/, '').slice(-800) || 'storm deps fetch failed');
+    } catch (err) {
+      setError(err?.message || String(err));
+    } finally {
+      await checkCache();
+      setBusy(null);
     }
-    await checkCache();
-    setBusy(null);
   };
   const filtered = catalog.filter(item => (category === 'All' || item.category === category) && `${item.coordinate} ${item[language]}`.toLowerCase().includes(query.toLowerCase()));
   const installedRows = declared.filter(item => item.toLowerCase().includes(query.toLowerCase()));
@@ -278,7 +282,7 @@ const LibrariesScreen = ({
             <Text className={styles.coordinate} numberOfLines={2}>
               {item}
             </Text>
-            <Text className={styles.description}>npm install {item}</Text>
+            <Text className={styles.description}>storm deps add {item}</Text>
           </View>
         </View>
 

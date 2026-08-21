@@ -7,13 +7,13 @@
  * RAI не используется: нативный модуль копирует бандл в rootfs
  * (/root/rai/rai.sh), и установка запускается локально.
  *
- *   1. apt update && apt upgrade -y
- *   2. apt install curl wget zip unzip -y
- *   3. Node.js 24 (nodesource; запасной вариант — apt nodejs)
- *   4. bash /root/rai/rai.sh        (локальный бандл из APK)
- *   5. rai install base             (apt, JDK 17, утилиты)
- *   6. rai install sdk              (нативный ARM Android SDK)
- *   7. rai status                   (проверка) → marker /root/.rai-setup.done
+ * Быстрый профиль установки (проекты Java + XML, кастомная сборка без Gradle):
+ *   1. apt update                   (БЕЗ полного apt upgrade — это минуты)
+ *   2. одним вызовом: JDK 17 + curl/wget/zip/unzip/ca-certificates
+ *      (Node.js больше не нужен — проекты не используют npm)
+ *   3. bash /root/rai/rai.sh        (локальный бандл из APK)
+ *   4. rai install sdk              (нативный ARM Android SDK)
+ *   5. rai status                   (проверка) → marker /root/.rai-setup.done
  *
  * Каждый шаг идемпотентен: при повторном входе (после обрыва/фонового
  * сворачивания) уже выполненные шаги быстро пропускаются, установка
@@ -32,6 +32,19 @@ export const SETUP_LOG = '/root/.rai-setup.log';
 export const SETUP_STATUS_FILE = '/root/.rai-status.txt'; // вывод `rai status` для парсинга
 export const ANDROID_HOME = '/root/android-sdk';
 export const RAI_VERSION = '0.0.1'; // версия вендоренного RAI (rai/version.json)
+export const STORM_BUNDLE = '/root/storm-bundle.zip';
+export const STORM_DIR = '/root/storm';
+
+/**
+ * Установка Storm Build из бандла (офлайн): распаковка в /root/storm,
+ * лаунчер в PATH, быстрая самопроверка (`storm templates`).
+ */
+export const STORM_INSTALL_CMD =
+  `mkdir -p ${STORM_DIR} && cd ${STORM_DIR} && ` +
+  `unzip -oq ${STORM_BUNDLE} && ` +
+  `chmod +x ${STORM_DIR}/storm && ` +
+  `ln -sf ${STORM_DIR}/storm /usr/local/bin/storm && ` +
+  `storm templates`;
 
 const shq = (v = '') => `'${String(v).replace(/'/g, `'\\''`)}'`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -102,36 +115,31 @@ const runStep = async (step: any, onLine: (line: string) => void, persistStep: (
 
 export const SETUP_STEPS = [
   {
+    // БЫСТРО: только `apt update` — полный `apt upgrade` убран (минуты работы
+    // и сотни МБ трафика; для сборки он не нужен). Повреждённая база dpkg
+    // после прерванной установки чинится на месте.
     id: 'apt',
-    title: { ru: 'apt update && apt upgrade', en: 'apt update && apt upgrade' },
-    // Сначала лечим незавершённую dpkg-базу (если прошлый apt upgrade прервали),
-    // иначе apt падает на half-configured пакетах (напр. ca-certificates).
-    cmd:
-      'export DEBIAN_FRONTEND=noninteractive; ' +
-      '(dpkg --configure -a 2>/dev/null || true); ' +
-      'apt update && apt upgrade -y',
-    check: 'command -v curl >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1 && [ -n "$(ls /var/lib/apt/lists/ 2>/dev/null | head -1)" ] && echo DONE || echo TODO',
-  },
-  {
-    id: 'tools',
-    title: { ru: 'Утилиты: curl, wget, zip, unzip', en: 'Utilities: curl, wget, zip, unzip' },
+    title: { ru: 'apt update (быстро, без upgrade)', en: 'apt update (fast, no upgrade)' },
     cmd:
       'export DEBIAN_FRONTEND=noninteractive; ' +
       '(dpkg --configure -a 2>/dev/null || true); ' +
       '(apt -f install -y 2>/dev/null || true); ' +
-      'apt install -y curl wget zip unzip ca-certificates',
-    check: 'command -v curl >/dev/null 2>&1 && command -v wget >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1 && command -v zip >/dev/null 2>&1 && echo DONE || echo TODO',
+      'apt update',
+    check: '[ -n "$(ls /var/lib/apt/lists/ 2>/dev/null | head -1)" ] && echo DONE || echo TODO',
   },
   {
-    id: 'node',
-    title: { ru: 'Node.js 24 (nodesource)', en: 'Node.js 24 (nodesource)' },
-    // Уже есть node 24+? → пропускаем. Иначе nodesource setup_24.x, при сбое — apt nodejs.
+    // Всё необходимое одним вызовом: утилиты сети/архивов + python3
+    // (на нём работает кастомный сборщик Storm Build).
+    id: 'tools',
+    title: { ru: 'Утилиты: curl, zip, python3', en: 'Utilities: curl, zip, python3' },
     cmd:
-      'if node -v 2>/dev/null | grep -qE "^v(2[0-9]|[0-9]{3,})"; then echo "node $(node -v) уже установлен"; ' +
-      'elif curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt install -y nodejs; then echo "node $(node -v) (nodesource 24.x)"; ' +
-      'else apt install -y nodejs && echo "node $(node -v) (apt fallback)"; fi',
-    check: 'node -v 2>/dev/null | grep -qE "^v(1[89]|[2-9][0-9])" && echo DONE || echo TODO',
+      'export DEBIAN_FRONTEND=noninteractive; ' +
+      '(dpkg --configure -a 2>/dev/null || true); ' +
+      'apt install -y --no-install-recommends curl wget zip unzip ca-certificates python3',
+    check: 'command -v curl >/dev/null 2>&1 && command -v wget >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1 && command -v zip >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 && echo DONE || echo TODO',
   },
+  // Node.js больше не устанавливается: проекты Java + XML не используют
+  // npm/Vite, и для кастомной сборки он не нужен. Это экономит 1-2 минуты.
   {
     id: 'rai',
     title: { ru: 'Установка RAI (локальный бандл)', en: 'Install RAI (local bundle)' },
@@ -166,16 +174,48 @@ export const SETUP_STEPS = [
     },
   },
   {
+    // JDK 17 + починка среды (DNS/зеркало/локаль/права /tmp) — но БЕЗ полного
+    // `apt upgrade` (--no-upgrade): это главный выигранный кусок времени.
     id: 'base',
-    title: { ru: 'rai install base (apt, JDK 17)', en: 'rai install base (apt, JDK 17)' },
-    cmd: 'rai install base',
+    title: { ru: 'rai install base --no-upgrade (JDK 17)', en: 'rai install base --no-upgrade (JDK 17)' },
+    cmd: 'rai install base --no-upgrade',
     check: 'command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1 && echo DONE || echo TODO',
   },
   {
     id: 'sdk',
     title: { ru: 'rai install sdk (нативный ARM SDK)', en: 'rai install sdk (native ARM SDK)' },
     cmd: 'rai install sdk',
-    check: `[ -d ${ANDROID_HOME}/build-tools ] && [ -d ${ANDROID_HOME}/platforms ] && [ -d ${ANDROID_HOME}/platform-tools ] && echo DONE || echo TODO`,
+    check: `[ -d ${ANDROID_HOME}/build-tools ] && [ -d ${ANDROID_HOME}/platforms ] && echo DONE || echo TODO`,
+  },
+  {
+    // Storm Build — кастомный сборщик без Gradle (вендорен в storm/, бандл
+    // внутри APK). Установка офлайн: распаковка архива + лаунчер в PATH.
+    id: 'storm',
+    title: { ru: 'Storm Build (кастомный сборщик)', en: 'Storm Build (custom builder)' },
+    cmd: STORM_INSTALL_CMD,
+    check: '[ -x /root/storm/storm ] && command -v storm >/dev/null 2>&1 && echo DONE || echo TODO',
+    run: async (emit) => {
+      emit('$ seed Storm bundle (assets/storm/storm-bundle.zip → /root/storm-bundle.zip)');
+      let seeded: any = { success: false };
+      try { seeded = await apt.seedStormBundle(); } catch (e) { seeded = { success: false, output: String(e) }; }
+      if (!seeded?.success) {
+        const probe = await execute('[ -s /root/storm-bundle.zip ] && echo YES || echo NO', '/');
+        if (!/YES/.test(probe.output || '')) {
+          emit(`❌ ${seeded?.output || 'seedStormBundle failed'}`);
+          return false;
+        }
+        emit('⚠ бандл уже есть в rootfs — продолжаем');
+      } else {
+        emit(`✓ ${seeded.output} (${Math.round((seeded.bytes || 0) / 1024)} KB)`);
+      }
+      const res = await streamRun(`${STORM_INSTALL_CMD} 2>&1`, emit, '/', 'storm');
+      const check = await execute('command -v storm >/dev/null 2>&1 && echo STORM_OK || echo STORM_MISSING', '/');
+      if (!/STORM_OK/.test(check.output || '')) {
+        emit('❌ команда storm не найдена после установки');
+        return false;
+      }
+      return res;
+    },
   },
   {
     id: 'status',
@@ -292,6 +332,8 @@ export const runRaiSetup = async ({ onStepStart, onStepEnd, onLine }) => {
       return { ok: false, summary: [{ id: 'rai', status: 'failed', output: seeded?.output || 'seedRaiBundle failed' }] };
     }
   }
+  // Бандл Storm Build — тоже офлайн-копия из APK (нужна шагу 'storm').
+  try { await apt.seedStormBundle(); } catch (e) { /* проверится на шаге */ }
 
   const byId = Object.fromEntries(SETUP_STEPS.map(step => [step.id, step]));
   const states = new Map<string, string>();
@@ -394,12 +436,24 @@ export const runRaiSetupPty = async ({ terminal, onStepStart, onStepEnd, onStatu
       } catch (_) {}
     }
 
-    // 1) JS-прелюдия: шаг 'rai' требует seed бандла из APK в rootfs (нативный код)
+    // 1) JS-прелюдия: шаги 'rai' и 'storm' требуют seed бандлов из APK в rootfs
     if (step.id === 'rai') {
       let seeded: any = { success: false };
       try { seeded = await apt.seedRaiBundle(); } catch (e) { seeded = { success: false, output: String(e) }; }
       if (!seeded?.success) {
         const probe = await execute(`[ -s ${shq(RAI_BUNDLE)} ] && echo YES || echo NO`, '/');
+        if (!/YES/.test(probe.output || '')) {
+          try { onStepEnd && onStepEnd(step.id, step, { status: 'failed', output: seeded.output }); } catch (_) {}
+          summary.push({ id: step.id, status: 'failed' });
+          return { ok: false, summary };
+        }
+      }
+    }
+    if (step.id === 'storm') {
+      let seeded: any = { success: false };
+      try { seeded = await apt.seedStormBundle(); } catch (e) { seeded = { success: false, output: String(e) }; }
+      if (!seeded?.success) {
+        const probe = await execute('[ -s /root/storm-bundle.zip ] && echo YES || echo NO', '/');
         if (!/YES/.test(probe.output || '')) {
           try { onStepEnd && onStepEnd(step.id, step, { status: 'failed', output: seeded.output }); } catch (_) {}
           summary.push({ id: step.id, status: 'failed' });

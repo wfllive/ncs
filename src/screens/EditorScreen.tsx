@@ -13,13 +13,25 @@ import { generateScreenJSX, writeScreenSource, syncComposeProject } from '../uti
 import { findMissingImports, addMissingImports, fileStats } from '../utils/importManager';
 import { analyzeKotlin as analyzeJS, summarizeProblems } from '../utils/kotlinAnalyzer';
 import { readProjectFile, writeProjectFile, listProjectFiles } from '../utils/projectFiles';
-import { execute, isPortServingHttp } from '../utils/shellExecutor';
-import { getProjectDir, getScreensDir } from '../config/runtime';
+import { execute } from '../utils/shellExecutor';
+import { getProjectDir } from '../config/runtime';
+import { layoutFileName } from '../utils/javaProject';
+import { renderScreenPreviewHtml, validateLayout } from '../utils/layoutPreview';
 import EditorSettings from '../components/EditorSettings';
 import { WebView } from 'react-native-webview';
 import { cn } from "../utils/cn";
 const fileIcon = ext => {
   switch (ext) {
+    case 'java':
+      return {
+        name: 'logo-android',
+        color: '#E76F00'
+      };
+    case 'xml':
+      return {
+        name: 'code-outline',
+        color: '#4DB337'
+      };
     case 'jsx':
       return {
         name: 'logo-react',
@@ -184,61 +196,47 @@ const EditorScreen = ({
   const guardOn = !!editor.designPreviewGuard;
   const previewVisible = previewEnabled && (!guardOn || previewGuardUnlocked);
 
-  // Запустить (или перезапустить) Vite dev и дождаться HTTP 200. ОБЩАЯ функция
-  // для авто-запуска (effect ниже) и кнопки «Старт». Всегда pkill + чистый старт,
-  // чтобы не зависеть от зависшего/устаревшего процесса (прежний баг: авто-запуск
-  // находил старый vite и не перезапускал). Возвращает true, когда Vite готов.
-  const startVite = useCallback(async cwd => {
-    // Готовность — ЖИВАЯ проверка: реальный HTTP-запрос через node (не лог!).
-    // Лог хранит старое "ready" даже когда Vite уже умер → фальшивое "запущен".
-    // node всегда есть (на нём Vite); работает там, где curl ненадёжен.
-    const http200 = async () => isPortServingHttp(5173, cwd);
-    try {
-      if (await http200()) return true;
-      if (/N/.test((await execute('[ -f node_modules/.bin/vite ] && echo Y || echo N', cwd)).output || '')) {
-        setYarnDevLog('npm install (ставлю Vite)…');
-        await execute('npm install --silent 2>&1 | tail -5', cwd);
-      }
-      setYarnDevLog('Запускаю Vite dev :5173…');
-      await execute('pkill -f "vite" 2>/dev/null; sleep 1; rm -f /tmp/vite.log', cwd);
-      // Vite в ФОНЕ через НЕ-await execute: нативный мост держит proot+Vite живыми,
-      // пока Vite работает. (nohup/& убивал Vite, когда execute возвращался — proot
-      // умирал → к открытию WebView уже CONNECTION_REFUSED.)
-      viteProcRef.current = execute('npm run dev -- --host 0.0.0.0 --port 5173 > /tmp/vite.log 2>&1', cwd).catch(() => {});
-      for (let i = 0; i < 30; i++) {
-        await new Promise(r => setTimeout(r, 2000));
-        if (await http200()) return true;
-        const tail = (await execute('tail -2 /tmp/vite.log 2>/dev/null', cwd)).output || '';
-        setYarnDevLog('Запуск Vite… ' + tail.replace(/\n/g, ' ').slice(-110));
-      }
-      return false;
-    } catch (e) {
-      setYarnDevLog('Ошибка запуска Vite: ' + String(e).slice(0, 140));
-      return false;
-    }
-  }, []);
+  // HOT RELOAD предпросмотр: никакого сервера нет — макет рендерится встроенным
+  // движком (layoutPreview) прямо в WebView из текущего кода. «Запуск» мгновенный.
+  const startVite = useCallback(async () => {
+    setYarnDevLog(language === 'ru' ? 'hot reload: рендер из кода (офлайн)' : 'hot reload: rendered from code (offline)');
+    return true;
+  }, [language]);
 
-  // Авто-запуск Vite при входе в режим WebView. Статус честный: зелёный только при 200.
+  // «Готовность» превью при входе во вкладку — мгновенно (нет сервера).
   useEffect(() => {
     if (activeTab !== 'design' || !previewVisible || previewMode !== 'webview') return;
+    setYarnDevRunning(true);
+    setYarnDevLog(language === 'ru' ? 'hot reload: рендер из кода (офлайн)' : 'hot reload: rendered from code (offline)');
+    setWebViewError(false);
+  }, [activeTab, previewVisible, previewMode, currentProject?.id, language]);
+
+  // Сам горячий рендер: при каждом изменении черновика/сохранении пересобираем
+  // HTML-копию макета. Если активен файл макета — берём прямо из редактора
+  // (превью показывает ровно то, что набрано), иначе — сохранённый макет экрана.
+  const [previewHtml, setPreviewHtml] = useState('');
+  useEffect(() => {
+    if (activeTab !== 'design' || !previewVisible || previewMode !== 'webview') return;
+    const proj = latestProjectRef.current || currentProject;
+    if (!proj || !currentScreen) return;
     let cancelled = false;
-    (async () => {
-      const cwd = getProjectDir(latestProjectRef.current || currentProject);
-      if (!cwd) return;
-      setYarnDevRunning(false);
-      const ok = await startVite(cwd);
-      if (!cancelled) {
-        setYarnDevRunning(ok);
-        if (ok) {
-          setYarnDevLog('Vite готов · http://127.0.0.1:5173');
-          setWebViewError(false);
-        }
-      }
-    })();
+    const activeIsLayout = Boolean(activeFile?.isScreen) || String(activeFile?.path || '').startsWith('app/res/layout/');
+    const xml = activeIsLayout
+      ? draft
+      : (currentScreen.layoutXml || generateScreenJSX(currentScreen, proj));
+    const layoutPath = activeFile?.path || `app/res/layout/${layoutFileName(currentScreen, Math.max(0, (proj.screens || []).findIndex(s => s.id === currentScreen.id)))}`;
+    renderScreenPreviewHtml(proj, xml, {
+      fileName: layoutPath,
+      title: currentScreen.name,
+      widthDp: previewDevice.widthDp,
+      heightDp: previewDevice.heightDp,
+    }).then(h => {
+      if (!cancelled) setPreviewHtml(h);
+    }).catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [activeTab, previewVisible, previewMode, currentProject?.id, startVite]);
+  }, [activeTab, previewVisible, previewMode, draft, previewNonce, currentScreenId, previewDeviceId, activeFile?.path]); // eslint-disable-line
   const editorApi = useRef(null);
   const draftRef = useRef('');
   const savedRef = useRef({});
@@ -259,17 +257,18 @@ const EditorScreen = ({
     return Math.max(0.3, Math.min(availW / (previewDevice.widthDp || 360), availH / (previewDevice.heightDp || 800), 1));
   }, [width, height, previewDevice]);
   const ru = language === 'ru';
+  // Экран в модели Java + XML — это его XML-макет (код — источник истины).
+  const screenIndex = useMemo(() => Math.max(0, (currentProject?.screens || []).findIndex(s => s.id === currentScreen?.id)), [currentProject, currentScreen]);
   const screenFilePath = useMemo(() => {
     if (!currentProject || !currentScreen) return null;
-    const safe = (currentScreen.name || 'Screen').replace(/[^A-Za-z0-9_]/g, '') || 'Screen';
-    return `src/screens/${safe}.jsx`;
-  }, [currentProject, currentScreen]);
+    return `app/res/layout/${layoutFileName(currentScreen, screenIndex)}`;
+  }, [currentProject, currentScreen, screenIndex]);
   const copy = ru ? {
     noProject: 'Проект не открыт',
     screenName: 'Название экрана',
     deleteScreen: 'Удалить экран?',
     lastScreen: 'Нельзя удалить единственный экран.',
-    consoleReady: 'Редактор готов. Откройте файл слева или сохраните JSX.',
+    consoleReady: 'Редактор готов. Откройте файл слева или сохраните макет.',
     clear: 'Очистить',
     output: 'Вывод',
     problems: 'Проблемы',
@@ -279,7 +278,7 @@ const EditorScreen = ({
     saving: 'Сохранение…',
     saved: 'Файл записан',
     saveFailed: 'Ошибка сохранения',
-    codePlaceholder: '// Введите JSX — React компонент\nimport React from "react";\nexport default function Home(){\n  return <div>Hello</div>\n}',
+    codePlaceholder: '<!-- Макет экрана Android -->\n<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"\n    android:layout_width="match_parent"\n    android:layout_height="match_parent"\n    android:orientation="vertical">\n\n    <TextView\n        android:layout_width="wrap_content"\n        android:layout_height="wrap_content"\n        android:text="Привет, мир!" />\n\n</LinearLayout>',
     design: 'Дизайн',
     editor: 'Код',
     preview: 'Превью',
@@ -294,7 +293,7 @@ const EditorScreen = ({
     openFile: 'Открыть файл',
     fallback: 'Предпросмотр недоступен — простой редактор',
     importsFix: 'Добавить импорт React',
-    checkCode: 'Проверить (vite build)',
+    checkCode: 'Проверить (макеты + build.sh)',
     checkRunning: 'Сборка…',
     checkOk: 'Сборка успешна',
     checkFailed: 'Сборка упала'
@@ -303,7 +302,7 @@ const EditorScreen = ({
     screenName: 'Screen name',
     deleteScreen: 'Delete screen?',
     lastScreen: 'Cannot delete the only screen.',
-    consoleReady: 'Editor ready. Open a file or save JSX.',
+    consoleReady: 'Editor ready. Open a file or save the layout.',
     clear: 'Clear',
     output: 'Output',
     problems: 'Problems',
@@ -313,7 +312,7 @@ const EditorScreen = ({
     saving: 'Saving…',
     saved: 'File written',
     saveFailed: 'Save failed',
-    codePlaceholder: '// Enter JSX — React component\nimport React from "react";\nexport default function Home(){\n  return <div>Hello</div>\n}',
+    codePlaceholder: '<!-- Android screen layout -->\n<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"\n    android:layout_width="match_parent"\n    android:layout_height="match_parent"\n    android:orientation="vertical">\n\n    <TextView\n        android:layout_width="wrap_content"\n        android:layout_height="wrap_content"\n        android:text="Hello, world!" />\n\n</LinearLayout>',
     design: 'Design',
     editor: 'Code',
     preview: 'Preview',
@@ -328,7 +327,7 @@ const EditorScreen = ({
     openFile: 'Open file',
     fallback: 'Preview unavailable — fallback editor',
     importsFix: 'Add React import',
-    checkCode: 'Check (vite build)',
+    checkCode: 'Check (layouts + build.sh)',
     checkRunning: 'Building…',
     checkOk: 'Build succeeded',
     checkFailed: 'Build failed'
@@ -345,18 +344,18 @@ const EditorScreen = ({
   }, []);
   useEffect(() => {
     if (!currentScreen || !screenFilePath) return;
-    // load JSX source for the screen: generate if missing else keep existing
-    let source = currentScreen.source || '';
+    // Макет экрана: сохранённый пользователем либо сгенерированный из дерева.
+    let source = currentScreen.layoutXml || '';
     if (!source || !source.trim()) {
       try {
-        source = generateScreenJSX(currentScreen);
+        source = generateScreenJSX(currentScreen, currentProject);
       } catch (e) {
-        source = `export default function ${currentScreen.name}(){ return <div>${currentScreen.name}</div> }`;
+        source = `<?xml version="1.0" encoding="utf-8"?>\n<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"\n    android:layout_width="match_parent"\n    android:layout_height="match_parent" />\n`;
       }
     }
     const tab = {
       path: screenFilePath,
-      name: `${currentScreen.name}.jsx`,
+      name: `${currentScreen.name}.xml`,
       isScreen: true
     };
     savedRef.current[screenFilePath] = source;
@@ -370,14 +369,22 @@ const EditorScreen = ({
   useEffect(() => {
     if (lintTimerRef.current) clearTimeout(lintTimerRef.current);
     lintTimerRef.current = setTimeout(() => {
-      // fileStats and analyzeJS
-      setLintProblems(analyzeJS(draft));
-      setMissingList(findMissingImports(draft).missing);
+      // Живая проверка по типу активного файла:
+      //  .xml — разбор макета (мгновенно, без компиляции);
+      //  прочие (Java и др.) — без статического анализа, ошибки покажет сборка.
+      const path = activeFile?.path || '';
+      if (path.endsWith('.xml')) {
+        const errs = validateLayout(draft);
+        setLintProblems(errs.map(e => ({ line: e.line || 1, col: 1, severity: 'error', message: e.message })));
+      } else {
+        setLintProblems([]);
+      }
+      setMissingList([]);
     }, 300);
     return () => {
       if (lintTimerRef.current) clearTimeout(lintTimerRef.current);
     };
-  }, [draft]);
+  }, [draft, activeFile?.path]);
   const handleEditorChange = useCallback(text => {
     draftRef.current = text;
     setDraft(text);
@@ -401,15 +408,15 @@ const EditorScreen = ({
     if (activeFile && activeFile.isScreen && currentScreen) {
       const result = await writeScreenSource(latestProjectRef.current || currentProject, currentScreen, content);
       if (result?.success) {
-        // try to keep tree in sync: if JSX looks like generated, ignore; else keep source
+        // Сохранённый макет — источник истины для превью и для сборки.
         updateScreen({
           ...currentScreen,
-          source: content
+          layoutXml: content
         });
         savedRef.current[activeFile.path] = content;
         setDirtyState(activeFile.path, false);
         setPreviewNonce(n => n + 1);
-        if (!silent) addWorkspaceLog(`${copy.saved} · ${currentScreen.name}.jsx`, 'success');
+        if (!silent) addWorkspaceLog(`${copy.saved} · ${activeFile.path}`, 'success');
       } else if (!silent) addWorkspaceLog(result?.output || copy.saveFailed, 'error');
       return result;
     }
@@ -496,17 +503,17 @@ const EditorScreen = ({
   }, [activeFile?.path, guardUnsaved, openFileByPath]);
   const activateScreenTab = useCallback(tab => {
     const project = latestProjectRef.current;
-    const screen = (project?.screens || []).find(s => `${s.name}.jsx` === tab.name);
+    const screen = (project?.screens || []).find(s => `${s.name}.xml` === tab.name);
     if (!screen) return;
     if (screen.id !== currentScreenId) {
       setCurrentScreen(screen.id);
       return;
     }
-    let source = screen.source || '';
+    let source = screen.layoutXml || '';
     if (!source) try {
-      source = generateScreenJSX(screen);
+      source = generateScreenJSX(screen, project);
     } catch (e) {
-      source = `export default function ${screen.name}(){return <div>${screen.name}</div>}`;
+      source = `<?xml version="1.0" encoding="utf-8"?>\n<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"\n    android:layout_width="match_parent"\n    android:layout_height="match_parent" />\n`;
     }
     savedRef.current[tab.path] = source;
     draftRef.current = source;
@@ -532,25 +539,30 @@ const EditorScreen = ({
     };
     if (dirtyRef.current[tab.path]) guardUnsaved(finish);else finish();
   }, [activeFile?.path, openTabs, guardUnsaved, openFileByPath, activateScreenTab]);
+  // Быстрая проверка БЕЗ сборки: синхронизация исходников на диск +
+  // разбор всех макетов + синтаксис build.sh. Полная проверка — на экране «Сборка».
   const runBuildCheck = useCallback(async () => {
     if (build.running || !currentProject) return;
     setBuild(c => ({
       ...c,
       running: true
     }));
-    addWorkspaceLog('vite build — проверка JSX', 'info');
+    addWorkspaceLog(ru ? 'Проверка: макеты + build.sh' : 'Check: layouts + build.sh', 'info');
     try {
       await doSave(true);
       const cwd = getProjectDir(latestProjectRef.current || currentProject);
       const sync = await syncComposeProject(latestProjectRef.current || currentProject);
       addWorkspaceLog(sync.output || 'sync done', 'info');
-      await execute('[ -f node_modules/.bin/vite ] || npm install --silent 2>&1 | tail -10', cwd);
-      const result = await execute('npm run build 2>&1 | tail -100', cwd);
+      const result = await execute(
+        'rc=0; for f in res/layout/*.xml; do [ -f "$f" ] || continue; head -c 1 "$f" >/dev/null || { echo "FAIL: $f"; rc=1; }; done; ' +
+        'bash -n build.sh 2>&1 || { echo "FAIL: build.sh"; rc=1; }; ' +
+        '[ -f AndroidManifest.xml ] || { echo "FAIL: AndroidManifest.xml отсутствует"; rc=1; }; ' +
+        'echo "CHECK_EXIT:$rc"', cwd);
       const out = result?.output || '';
-      const failed = /error|failed/i.test(out) && !/built in/i.test(out);
+      const failed = /FAIL:/.test(out) || /CHECK_EXIT:1/.test(out);
       setBuild({
         running: false,
-        ok: !failed && result?.success !== false,
+        ok: !failed,
         output: out,
         at: Date.now()
       });
@@ -565,7 +577,7 @@ const EditorScreen = ({
       }));
       addWorkspaceLog(`${copy.checkFailed}: ${e?.message || String(e)}`, 'error');
     }
-  }, [build.running, currentProject, doSave, addWorkspaceLog, copy.checkOk, copy.checkFailed]);
+  }, [build.running, currentProject, doSave, addWorkspaceLog, copy.checkOk, copy.checkFailed, ru]);
   const saveNow = useCallback(async () => {
     if (saving || !currentProject) return;
     setSaving(true);
@@ -726,7 +738,7 @@ const EditorScreen = ({
       </View> : null}
 
       <View className={styles.workspaceBar}>
-        <Pressable onPress={() => setScreenMenu(true)} className={styles.screenSelect}><Icon name="logo-react" size={15} color={colors.primary} /><Text className={styles.screenText} numberOfLines={1}>{currentScreen?.name || 'Screen'}</Text><Icon name="chevron-down" size={13} color={colors.textTertiary} /></Pressable>
+        <Pressable onPress={() => setScreenMenu(true)} className={styles.screenSelect}><Icon name="logo-android" size={15} color={colors.primary} /><Text className={styles.screenText} numberOfLines={1}>{currentScreen?.name || 'Screen'}</Text><Icon name="chevron-down" size={13} color={colors.textTertiary} /></Pressable>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName={styles.modeTabs}>
           {tabs.map(tab => <Pressable key={tab.key} onPress={tab.action} className={cn(styles.modeTab, tab.key === activeTab && styles.modeTabActive)}><Icon name={tab.icon} size={15} color={tab.key === activeTab ? colors.primary : colors.textSecondary} /><Text className={cn(styles.modeTabText, tab.key === activeTab && styles.modeTabTextActive)}>{tab.label}</Text></Pressable>)}
         </ScrollView>
@@ -763,22 +775,10 @@ const EditorScreen = ({
               flex: 1,
               fontSize: 11,
               color: colors.textSecondary
-            }} numberOfLines={1}>{yarnDevRunning ? ru ? 'yarn dev работает :5173' : 'yarn dev running :5173' : yarnDevLog || (ru ? 'yarn dev не запущен' : 'yarn dev not running')}</Text>
-                  <Pressable onPress={async () => {
-              const cwd = getProjectDir(latestProjectRef.current || currentProject);
-              if (yarnDevRunning) {
-                await execute('pkill -f vite 2>/dev/null; echo stopped', cwd);
-                setYarnDevRunning(false);
-                setYarnDevLog('остановлен');
-              } else {
-                setYarnDevRunning(false);
-                const ok = await startVite(cwd);
-                setYarnDevRunning(ok);
-                if (ok) setWebViewError(false);
-              }
-            }} className={styles.previewControl} style={{
+            }} numberOfLines={1}>{ru ? 'hot reload: превью из кода — обновляется при наборе и сохранении' : 'hot reload: preview rendered from code — updates as you type and save'}</Text>
+                  <Pressable onPress={() => setPreviewNonce(n => n + 1)} className={styles.previewControl} style={{
               height: 26
-            }}><Icon name={yarnDevRunning ? 'pause-outline' : 'play-outline'} size={12} color={colors.primary} /><Text className={styles.previewControlText}>{yarnDevRunning ? ru ? 'Стоп' : 'Stop' : ru ? 'Старт' : 'Start'}</Text></Pressable>
+            }}><Icon name="refresh-outline" size={12} color={colors.primary} /><Text className={styles.previewControlText}>{ru ? 'Обновить' : 'Reload'}</Text></Pressable>
                 </View> : null}
               {!previewVisible ? <View style={{
             flex: 1,
@@ -816,12 +816,10 @@ const EditorScreen = ({
                     <View style={{
               flex: 1,
               width: '100%',
-              maxWidth: previewDevice.widthDp,
+              maxWidth: previewDevice.widthDp + 8,
               borderRadius: 20,
               overflow: 'hidden',
-              backgroundColor: '#fff',
-              borderWidth: 2,
-              borderColor: '#CBD5E1',
+              backgroundColor: 'transparent',
               shadowColor: '#000',
               shadowOpacity: 0.1,
               shadowRadius: 12,
@@ -831,29 +829,20 @@ const EditorScreen = ({
               },
               elevation: 6
             }}>
-                      <View style={{
-                height: 24,
-                backgroundColor: '#0F172A',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}>
-                        <Text style={{
-                  color: '#94A3B8',
-                  fontSize: 10,
-                  fontWeight: '600'
-                }}>9:41</Text>
-                      </View>
-                      <WebView key={'webview-' + String(yarnDevRunning) + '-' + previewNonce + '-' + previewDeviceId} source={{
-                uri: 'http://127.0.0.1:5173'
+                      {/* Горячий предпросмотр: HTML-копия макета, пересобирается
+                          при каждом изменении кода (см. previewHtml). */}
+                      <WebView key={'webview-' + String(previewNonce) + '-' + previewDeviceId + '-' + String(currentScreenId)} source={{
+                html: previewHtml || '<!DOCTYPE html><html><body></body></html>',
+                baseUrl: 'about:blank'
               }} style={{
                 flex: 1,
-                backgroundColor: '#fff'
-              }} javaScriptEnabled domStorageEnabled allowFileAccess={true} allowUniversalAccessFromFileURLs={true} mixedContentMode="always" originWhitelist={['*']} startInLoadingState renderLoading={() => <View style={{
+                backgroundColor: 'transparent'
+              }} originWhitelist={['*']} startInLoadingState renderLoading={() => <View style={{
                 flex: 1,
                 alignItems: 'center',
                 justifyContent: 'center',
                 backgroundColor: '#fff'
-              }}><ActivityIndicator color={colors.primary} /></View>} injectedJavaScriptBeforeContentLoaded={`var m=document.querySelector('meta[name="viewport"]');if(m)m.setAttribute('content','width=${previewDevice.widthDp}, initial-scale=1');`} showsVerticalScrollIndicator={false} showsHorizontalScrollIndicator={false} />
+              }}><ActivityIndicator color={colors.primary} /></View>} showsVerticalScrollIndicator={false} showsHorizontalScrollIndicator={false} />
                     </View>
                   </View> : <View style={{
             flex: 1,
@@ -869,24 +858,24 @@ const EditorScreen = ({
               fontSize: 14,
               fontWeight: '700',
               textAlign: 'center'
-            }}>{yarnDevLog || (ru ? 'Запуск Vite…' : 'Starting Vite…')}</Text>
+                    }}>{yarnDevLog || (ru ? 'Готовлю предпросмотр…' : 'Preparing preview…')}</Text>
                     <Text style={{
               color: colors.textSecondary,
               fontSize: 11,
               textAlign: 'center',
               lineHeight: 15
-            }}>{ru ? 'Vite dev запускается на :5173. Предпросмотр откроется автоматически, как только сервер будет готов.' : 'Vite dev is starting on :5173. The preview opens automatically once ready.'}</Text>
+            }}>{ru ? 'Макет рендерится прямо из кода — без сервера и эмулятора.' : 'The layout is rendered straight from code — no server, no emulator.'}</Text>
                     <View style={{
               flexDirection: 'row',
               gap: 8,
               marginTop: 6
             }}>
                       <PrimaryButton title={ru ? 'Перезапустить' : 'Restart'} icon="refresh-outline" onPress={async () => {
-                const c = getProjectDir(currentProject);
                 setYarnDevRunning(false);
-                const ok = await startVite(c);
+                const ok = await startVite();
                 setYarnDevRunning(ok);
                 if (ok) setWebViewError(false);
+                setPreviewNonce(n => n + 1);
               }} />
                     </View>
                   </View>}
@@ -961,7 +950,8 @@ const EditorScreen = ({
             tabSize: editor.tabSize || 4,
             spacesForTab: editor.spacesForTab !== false,
             wordWrap: editor.wordWrap === true,
-            completion: editor.completion !== false
+            completion: editor.completion !== false,
+            lang: (activeFile?.name || '').endsWith('.xml') ? 'xml' : (activeFile?.name || '').endsWith('.java') ? 'java' : 'jsx'
           }} diagnostics={activeProblems} onCursor={setCursorInfo} />
               {hotkeysOn ? <View className={styles.toolbar} style={{
             backgroundColor: ide.panel,
@@ -983,9 +973,9 @@ const EditorScreen = ({
             }} className={styles.statusItem}><Icon name="close-circle" size={12} color="#fff" /><Text className={styles.statusText}>{totalErrors}</Text></Pressable><Pressable onPress={() => {
               setDockTab('problems');
               setLogMode('half');
-            }} className={styles.statusItem}><Icon name="warning-outline" size={12} color="#fff" /><Text className={styles.statusText}>{totalWarnings}</Text></Pressable><Pressable onPress={() => setLogMode(logMode === 'hidden' ? 'half' : 'hidden')} className={styles.statusItem}><Icon name="terminal-outline" size={12} color="#fff" /><Text className={styles.statusText}>{logs.length}</Text></Pressable>{build.running ? <View className={styles.statusItem}><ActivityIndicator size={11} color="#fff" /><Text className={styles.statusText}>vite build</Text></View> : null}<View style={{
+            }} className={styles.statusItem}><Icon name="warning-outline" size={12} color="#fff" /><Text className={styles.statusText}>{totalWarnings}</Text></Pressable><Pressable onPress={() => setLogMode(logMode === 'hidden' ? 'half' : 'hidden')} className={styles.statusItem}><Icon name="terminal-outline" size={12} color="#fff" /><Text className={styles.statusText}>{logs.length}</Text></Pressable>{build.running ? <View className={styles.statusItem}><ActivityIndicator size={11} color="#fff" /><Text className={styles.statusText}>check</Text></View> : null}<View style={{
               flex: 1
-            }} /><Text className={styles.statusText}>Ln {cursorInfo.line}, Col {cursorInfo.col}</Text>{!narrow ? <Text className={styles.statusText}>{editor.spacesForTab !== false ? `Spaces: ${editor.tabSize || 4}` : `Tab Size: ${editor.tabSize || 4}`}</Text> : null}{!narrow ? <Text className={styles.statusText}>UTF-8</Text> : null}<Text className={styles.statusText}>JSX</Text></View> : null}
+            }} /><Text className={styles.statusText}>Ln {cursorInfo.line}, Col {cursorInfo.col}</Text>{!narrow ? <Text className={styles.statusText}>{editor.spacesForTab !== false ? `Spaces: ${editor.tabSize || 4}` : `Tab Size: ${editor.tabSize || 4}`}</Text> : null}{!narrow ? <Text className={styles.statusText}>UTF-8</Text> : null}<Text className={styles.statusText}>{(activeFile?.name || '').endsWith('.xml') ? 'XML' : (activeFile?.name || '').endsWith('.java') ? 'Java' : 'Text'}</Text></View> : null}
             </View>}
         </View>
       </View>
@@ -1040,7 +1030,7 @@ const EditorScreen = ({
             color: ide.panelTextDim,
             fontSize: 10.5,
             fontFamily: 'monospace'
-          }} numberOfLines={2}>{build.running ? 'vite build …' : build.at ? `${build.ok ? copy.checkOk : copy.checkFailed} · ${new Date(build.at).toLocaleTimeString()}` : 'Нажмите чтобы проверить: npm run build'}</Text>
+          }} numberOfLines={2}>{build.running ? 'check …' : build.at ? `${build.ok ? copy.checkOk : copy.checkFailed} · ${new Date(build.at).toLocaleTimeString()}` : 'Нажмите чтобы проверить макеты и build.sh'}</Text>
                 {!build.running ? <Icon name="refresh" size={14} color="#569CD6" /> : null}
               </Pressable>
               {activeProblems.map((p, i) => <Pressable key={i} className={styles.logRow} onPress={() => editorApi.current?.command('gotoLine', p.line)}>
@@ -1107,11 +1097,11 @@ const EditorScreen = ({
       <Modal visible={screenMenu} transparent animationType="fade" onRequestClose={() => setScreenMenu(false)}><Pressable className={styles.overlay} onPress={() => setScreenMenu(false)}><SectionCard className={styles.screenDialog} title={t('screens')} icon="layers-outline"><ScrollView style={{ maxHeight: height * 0.55 }} keyboardShouldPersistTaps="handled">{currentProject.screens.map(screen => <View key={screen.id} className={cn(styles.screenRow, screen.id === currentScreenId && styles.screenRowActive)}><Pressable className={styles.screenRowMain} onPress={() => {
               setScreenMenu(false);
               guardUnsaved(() => setCurrentScreen(screen.id));
-            }}><Icon name="logo-react" size={16} color={screen.id === currentScreenId ? colors.primary : colors.textSecondary} /><Text className={styles.screenRowText}>{screen.name}</Text></Pressable><IconButton name="copy-outline" onPress={() => duplicateScreen(screen.id)} className={styles.rowButton} /><IconButton name="trash-outline" danger onPress={() => removeScreen(screen.id)} className={styles.rowButton} /></View>)}</ScrollView><PrimaryButton title={t('addScreen')} icon="add" onPress={() => {
+            }}><Icon name="logo-android" size={16} color={screen.id === currentScreenId ? colors.primary : colors.textSecondary} /><Text className={styles.screenRowText}>{screen.name}</Text></Pressable><IconButton name="copy-outline" onPress={() => duplicateScreen(screen.id)} className={styles.rowButton} /><IconButton name="trash-outline" danger onPress={() => removeScreen(screen.id)} className={styles.rowButton} /></View>)}</ScrollView><PrimaryButton title={t('addScreen')} icon="add" onPress={() => {
             setScreenMenu(false);
             setNewScreenOpen(true);
           }} /></SectionCard></Pressable></Modal>
-      <Modal visible={newScreenOpen} transparent animationType="fade" onRequestClose={() => setNewScreenOpen(false)}><KeyboardAvoidingView className={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><SectionCard className={styles.newDialog} title={t('addScreen')} icon="logo-react"><TextInput autoFocus value={newScreenName} onChangeText={setNewScreenName} onSubmitEditing={createScreen} placeholder={copy.screenName} placeholderTextColor={colors.textTertiary} className={styles.input} /><View style={{
+      <Modal visible={newScreenOpen} transparent animationType="fade" onRequestClose={() => setNewScreenOpen(false)}><KeyboardAvoidingView className={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><SectionCard className={styles.newDialog} title={t('addScreen')} icon="logo-android"><TextInput autoFocus value={newScreenName} onChangeText={setNewScreenName} onSubmitEditing={createScreen} placeholder={copy.screenName} placeholderTextColor={colors.textTertiary} className={styles.input} /><View style={{
             flexDirection: 'row',
             gap: 8
           }}><IconButton name="close" label={t('cancel')} onPress={() => setNewScreenOpen(false)} style={{

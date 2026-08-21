@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Yandex Ads Demo</string>
+    <string name="title_ads">Storm Engine + Yandex Ads SDK</string>
+    <string name="btn_show_interstitial">Show Interstitial Ad</string>
+    <string name="btn_show_rewarded">Show Rewarded Ad</string>
+</resources>

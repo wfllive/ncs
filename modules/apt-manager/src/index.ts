@@ -28,6 +28,8 @@ export const getRootfsProgress = async () =>
   native?.getRootfsProgress?.() || { stage: 'idle', url: '', downloadedBytes: 0, totalBytes: 0, message: '' };
 export const seedRaiBundle = async () =>
   native?.seedRaiBundle?.() || { success: false, output: 'Not available' };
+export const seedStormBundle = async () =>
+  native?.seedStormBundle?.() || { success: false, output: 'Not available' };
 export const canInstallApks = async () => native?.canInstallApks?.() || false;
 export const installApk = async (path: string) => native?.installApk?.(path) || { success: false, output: 'Native APK installer is unavailable' };
 export const launchPackage = async (packageName: string) => native?.launchPackage?.(packageName) || { success: false, output: 'Native package launcher is unavailable' };

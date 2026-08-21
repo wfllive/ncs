@@ -10,7 +10,7 @@ const PRIVACY_ACCEPTED_KEY = '@nova_privacy_accepted_v2';
 const STRINGS = {
   ru: {
     title: 'Политика конфиденциальности',
-    intro: 'NovaCompose Studio работает полностью на вашем устройстве. Приложению не нужны аккаунты, и оно не передаёт ваши данные разработчику.',
+    intro: 'NovaJava Studio работает полностью на вашем устройстве. Приложению не нужны аккаунты, и оно не передаёт ваши данные разработчику.',
     points: [
       'Приложение не собирает персональные данные у разработчика: нет своих серверов, аналитики и трекеров.',
       'Приложение бесплатное и показывает рекламу Рекламной сети Яндекса. Для подбора объявлений Яндекс может использовать рекламный идентификатор устройства — он обрабатывается по политике конфиденциальности Яндекса (yandex.ru/legal/confidential).',
@@ -24,7 +24,7 @@ const STRINGS = {
   },
   en: {
     title: 'Privacy policy',
-    intro: 'NovaCompose Studio works entirely on your device. It needs no accounts and does not send your data to the developer.',
+    intro: 'NovaJava Studio works entirely on your device. It needs no accounts and does not send your data to the developer.',
     points: [
       'The developer collects no personal data: the app has no servers, analytics or trackers of its own.',
       'The app is free and shows ads from the Yandex Advertising Network. To select ads Yandex may use the device advertising ID, processed under the Yandex privacy policy (yandex.ru/legal/confidential).',

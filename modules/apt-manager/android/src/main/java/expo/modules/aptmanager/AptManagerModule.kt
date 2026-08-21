@@ -755,6 +755,56 @@ class AptManagerModule : Module() {
         }
     }
 
+    // ---------------------------------------------------------------------
+    // Storm Build — кастомный сборщик без Gradle (вендорен в storm/).
+    // Плагин with-storm-bundle.js упаковывает его в
+    // assets модуля (storm/storm-bundle.zip); здесь копируем архив в
+    // rootfs как /root/storm-bundle.zip — шаг установки распакует его
+    // в /root/storm. GitHub для установки не нужен.
+    // ---------------------------------------------------------------------
+
+    private fun getStormRootfsDir(): File = File(getProotRootfsDir(), "root")
+
+    private fun seedStormBundle(): Map<String, Any> {
+        return try {
+            val appCtx = appContext.reactContext!!
+            val destDir = getStormRootfsDir()
+            destDir.mkdirs()
+            val dest = File(destDir, "storm-bundle.zip")
+            if (dest.isFile && dest.length() > 100_000L) {
+                return mapOf(
+                    "success" to true,
+                    "output" to "Storm bundle already seeded",
+                    "path" to "/root/storm-bundle.zip",
+                    "bytes" to dest.length(),
+                )
+            }
+            val input = appCtx.assets.open("storm/storm-bundle.zip")
+            val tmp = File(destDir, "storm-bundle.zip.tmp")
+            FileOutputStream(tmp).use { out -> input.copyTo(out) }
+            input.close()
+            tmp.setReadable(true, false)
+            if (tmp.renameTo(dest)) {
+                mapOf(
+                    "success" to true,
+                    "output" to "Storm bundle seeded from APK assets",
+                    "path" to "/root/storm-bundle.zip",
+                    "bytes" to dest.length(),
+                )
+            } else {
+                tmp.copyTo(dest, overwrite = true)
+                tmp.delete()
+                mapOf(
+                    "success" to true,
+                    "output" to "Storm bundle seeded from APK assets (copy)",
+                    "path" to "/root/storm-bundle.zip",
+                    "bytes" to dest.length(),
+                )
+            }
+        } catch (e: Exception) {
+            mapOf("success" to false, "output" to (e.message ?: e.toString()))
+        }
+    }
     /** True when the app may read/write shared storage (All files access on API 30+). */
     private fun hasAllFilesAccess(): Boolean {
         val ctx = appContext.reactContext ?: return false
@@ -1031,6 +1081,10 @@ class AptManagerModule : Module() {
         // RAI bundle: copy assets/rai/rai.sh from the APK into the rootfs
         AsyncFunction("seedRaiBundle") Coroutine { ->
             withContext(Dispatchers.IO) { seedRaiBundle() }
+        }
+
+        AsyncFunction("seedStormBundle") Coroutine { ->
+            withContext(Dispatchers.IO) { seedStormBundle() }
         }
 
         // Shared storage ("память") — All files access (API 30+) / legacy dialog

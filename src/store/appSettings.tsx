@@ -7,7 +7,7 @@ const STORAGE_KEY = '@skpro_app_settings_v2';
 
 const messages = {
   ru: {
-    appName: 'React Studio',
+    appName: 'NovaJava Studio',
     appSubtitle: 'Конструктор React + Vite + Android WebView',
     projects: 'Проекты',
     newProject: 'Новый проект',
@@ -52,7 +52,7 @@ const messages = {
     ready: 'Готово',
   },
   en: {
-    appName: 'React Studio',
+    appName: 'NovaJava Studio',
     appSubtitle: 'React + Vite + Android WebView builder',
     projects: 'Projects',
     newProject: 'New project',

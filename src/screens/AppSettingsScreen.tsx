@@ -235,7 +235,7 @@ const AppSettingsScreen = ({
           </SectionCard>
 
           <SectionCard title={language === 'ru' ? 'О приложении' : 'About'} icon="information-circle-outline">
-            <View className={styles.infoRow}><Text className={styles.infoLabel}>React Studio</Text><Text className={styles.infoValue}>1.0.0</Text></View>
+            <View className={styles.infoRow}><Text className={styles.infoLabel}>NovaJava Studio</Text><Text className={styles.infoValue}>1.0.0</Text></View>
             <View className={styles.infoRow}><Text className={styles.infoLabel}>React</Text><Text className={styles.infoValue}>19.2.3</Text></View>
             <View className={styles.infoRow}><Text className={styles.infoLabel}>Vite</Text><Text className={styles.infoValue}>5.4.0</Text></View>
             <View className={styles.infoRow}><Text className={styles.infoLabel}>{language === 'ru' ? 'Поддержка Android' : 'Android support'}</Text><Text className={styles.infoValue}>7–17+ · API 24–37+</Text></View>

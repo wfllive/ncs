@@ -44,10 +44,11 @@
     "bdg": "node scripts/bdg.js",
     "proot": "bash scripts/build-proot-termux-fix.sh",
     "key": "node scripts/generate-keystore.js",
-    "test": "node test-build-pipeline.js",
+    "test": "node scripts/test-app.mjs",
     "editor": "node scripts/build-editor.mjs && node scripts/test-editor.mjs && node scripts/test-analyzer.mjs",
     "test:ide": "node scripts/test-editor.mjs && node scripts/test-analyzer.mjs",
-    "test:preview": "node scripts/test-activity-tree.mjs"
+    "test:preview": "node scripts/test-layout-preview.mjs",
+    "test:app": "node scripts/test-app.mjs"
   },
   "private": true,
   "devDependencies": {
@@ -71,5 +72,6 @@
     "prettier-plugin-tailwindcss": "^0.5.14",
     "tailwindcss": "^3.4.17",
     "typescript": "~6.0.3"
-  }
+  },
+  "description": "Конструктор нативных Android-приложений: Java + XML, кастомная сборка без Gradle, hot-reload предпросмотр"
 }

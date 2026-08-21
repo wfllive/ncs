@@ -12,16 +12,32 @@
 
 ## Что выполняется (по шагам)
 
+Ускоренный профиль под проекты **Java + XML с кастомной сборкой (без Gradle)**:
+
 ```
-1. apt update && apt upgrade -y
-2. apt install -y curl wget zip unzip ca-certificates
-3. Node.js 24 (deb.nodesource.com/setup_24.x; запасной вариант — apt nodejs)
-4. bash /root/rai/rai.sh        ← локальный бандл из APK, GitHub не нужен
-5. rai install base             ← apt, JDK 17, утилиты, настройки proot
-6. rai install sdk              ← нативный ARM Android SDK
+1. apt update                   ← БЕЗ полного «apt upgrade» (экономия минут)
+2. apt install -y --no-install-recommends curl wget zip unzip ca-certificates python3
+3. bash /root/rai/rai.sh        ← локальный бандл из APK, GitHub не нужен
+4. rai install base --no-upgrade← JDK 17 + настройки proot (без повторного upgrade)
+5. rai install sdk              ← нативный ARM Android SDK
+6. Storm Build                  ← бандл из APK → /root/storm-bundle.zip,
+                                   распаковка в /root/storm + лаунчер в PATH
 7. rai status                   ← проверка: Java + build-tools + platforms
 8. touch /root/.rai-setup.done  ← маркер готовности
 ```
+
+Что убрано относительно старого профиля и почему:
+
+- **`apt upgrade -y`** — самый долгий шаг (сотни пакетов). Для сборки он не
+  нужен, достаточно `apt update`;
+- **Node.js** — проекты больше не используют npm/Vite (они на Java + XML),
+  поэтому и сам `node`, и `npm install` при создании проекта удалены;
+- `rai install base` вызывается с **`--no-upgrade`**, чтобы не повторять
+  полный апгрейд внутри.
+
+Сборка проектов идёт кастомным сборщиком **Storm Build** (вендорен в `storm/`,
+бандл зашит в assets APK как `storm/storm-bundle.zip`, нативный модуль
+`seedStormBundle` копирует его в rootfs — как бандл RAI).
 
 После успешного `rai status` приложение переходит на главный экран со списком
 проектов. Если установку прервали (приложение закрыли) — при следующем запуске

@@ -1,158 +1,218 @@
+/**
+ * LivePreviewScreen — ГОРЯЧИЙ предпросмотр макета (hot reload).
+ *
+ * Как это работает (без эмулятора и без сервера):
+ *   1. Макет экрана (res/layout/*.xml) читается с диска.
+ *   2. Встроенный движок (layoutPreview) превращает его в HTML-копию
+ *      интерфейса — с ресурсами из res/values, темой проекта, рамкой устройства.
+ *   3. Экран следит за файлом: как только макет меняется (сохранение в
+ *      редакторе), превью перерисовывается само — это и есть hot reload.
+ *
+ * Для проверки на реальном устройстве — кнопка «Собрать и установить»:
+ * кастомный пайплайн (без Gradle) собирает APK за секунды.
+ */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, View, Text, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, View, Text, useWindowDimensions } from 'react-native';
 import { AppScreen, IconButton, PrimaryButton, TopBar } from '../components/AppUI';
 import { Icon } from '../components/Icon';
 import { WebView } from 'react-native-webview';
 import { useProject } from '../store/projectStore';
 import { useAppSettings } from '../store/appSettings';
-import { execute, isPortServingHttp } from '../utils/shellExecutor';
+import { execute } from '../utils/shellExecutor';
 import { getProjectDir } from '../config/runtime';
+import { renderScreenPreviewHtml, invalidatePreviewCache } from '../utils/layoutPreview';
+import { layoutFileName } from '../utils/javaProject';
+import { buildProject, exportApk, installApk, launchApp } from '../utils/nativeBuild';
 
-const PREVIEW_PORT = 5173;
-const PREVIEW_URL = `http://127.0.0.1:${PREVIEW_PORT}/`;
-
-// Состояния предпросмотра
-const ST = { CHECKING: 'checking', READY: 'ready', STARTING: 'starting', ERROR: 'error' };
+const ST = { LOADING: 'loading', READY: 'ready', EMPTY: 'empty', BUILDING: 'building' };
 
 const LivePreviewScreen = ({ navigation }) => {
-  const { currentProject, getCurrentScreen } = useProject();
+  const { currentProject, getCurrentScreen, currentScreenId } = useProject();
   const { colors, language } = useAppSettings();
   const { width } = useWindowDimensions();
   const phone = width < 560;
-  const screen = getCurrentScreen();
   const ru = language === 'ru';
-  const [status, setStatus] = useState(ST.CHECKING);
+  const screen = getCurrentScreen();
+  const [status, setStatus] = useState(ST.LOADING);
+  const [html, setHtml] = useState('');
   const [detail, setDetail] = useState('');
-  const [reloadKey, setReloadKey] = useState(0);
-  const webviewRef = useRef(null);
+  const [buildLog, setBuildLog] = useState('');
+  const [lastReload, setLastReload] = useState(0);
+  const lastSigRef = useRef('');
   const cancelledRef = useRef(false);
-  const viteProcRef = useRef(null);
 
+  const screenIndex = Math.max(0, (currentProject?.screens || []).findIndex((s) => s.id === currentScreenId));
+  const layoutRel = `app/res/layout/${layoutFileName(screen, screenIndex)}`;
   const cwd = getProjectDir(currentProject);
 
-  const checkVite = useCallback(async () => {
-    const r = await execute(
-      `node -e 'const h=require("http");h.get({host:"127.0.0.1",port:${PREVIEW_PORT},path:"/",timeout:2500},x=>process.exit(x.statusCode<500?0:1)).on("error",()=>process.exit(1))' 2>/dev/null; echo RC_$?; echo "|"; pgrep -f "vite" | head -1`,
-      cwd,
-    );
-    const out = r?.output || '';
-    return { http: /RC_0\b/.test(out), running: /RC_0\b/.test(out), raw: out };
-  }, [cwd]);
+  const renderFrom = useCallback(async (sourceXml, sig) => {
+    if (!currentProject) return;
+    invalidatePreviewCache(currentProject);
+    const doc = await renderScreenPreviewHtml(currentProject, sourceXml, {
+      fileName: layoutRel,
+      title: screen?.name || currentProject.name,
+      widthDp: phone ? 340 : 390,
+      heightDp: phone ? 640 : 780,
+    });
+    if (cancelledRef.current) return;
+    lastSigRef.current = sig;
+    setHtml(doc);
+    setLastReload(Date.now());
+    setStatus(ST.READY);
+    setDetail('');
+  }, [currentProject, layoutRel, phone, screen?.name]);
 
-  const startVite = useCallback(async () => {
-    if (!cwd) return;
-    setStatus(ST.STARTING);
-    setDetail(ru ? 'Устанавливаю зависимости и запускаю Vite…' : 'Installing deps and starting Vite…');
-    await execute('[ -f node_modules/.bin/vite ] || npm install --silent 2>&1 | tail -5', cwd);
-    await execute('pkill -f "vite" 2>/dev/null; sleep 1; rm -f /tmp/vite.log', cwd);
-    // Vite foreground через НЕ-await execute — нативный мост держит его живым.
-    // (nohup/& убивал Vite, когда execute возвращался → CONNECTION_REFUSED.)
-    viteProcRef.current = execute(`npm run dev -- --host 0.0.0.0 --port ${PREVIEW_PORT} > /tmp/vite.log 2>&1`, cwd).catch(() => {});
-    // Подаём Vite несколько секунд на подъём
-    for (let i = 0; i < 12; i += 1) {
+  /** Прочитать макет с диска и перерисовать, если он изменился. */
+  const refresh = useCallback(async (force = false) => {
+    if (!currentProject || !cwd) {
+      setStatus(ST.EMPTY);
+      setDetail(ru ? 'Откройте проект' : 'Open a project');
+      return;
+    }
+    try {
+      const r = await execute(
+        `if [ -f ${JSON.stringify(layoutRel)} ]; then sig="$(stat -c '%Y.%s' ${JSON.stringify(layoutRel)} 2>/dev/null || echo 0)"; echo "SIG:$sig"; cat ${JSON.stringify(layoutRel)}; else echo SIG:MISSING; fi`,
+        cwd,
+      );
       if (cancelledRef.current) return;
-      await new Promise(res => setTimeout(res, 1500));
-      const c = await checkVite();
-      if (c.http) {
-        setStatus(ST.READY);
-        setDetail('');
-        setReloadKey(k => k + 1);
+      const out = String(r?.output || '');
+      const m = /SIG:([^\n]*)/.exec(out);
+      const sig = m ? m[1] : 'MISSING';
+      if (sig === 'MISSING') {
+        // Файла ещё нет (проект не записан) — рендерим из памяти проекта.
+        const memXml = screen?.layoutXml || '';
+        if (!force && lastSigRef.current === `mem:${memXml.length}`) return;
+        if (!memXml && !screen?.rootComponent) {
+          setStatus(ST.EMPTY);
+          setDetail(ru ? 'Макет пуст — добавьте виджеты на вкладке «Дизайн»' : 'Layout is empty');
+          return;
+        }
+        await renderFrom(memXml || '<LinearLayout android:layout_width="match_parent" android:layout_height="match_parent" />', `mem:${memXml.length}`);
         return;
       }
+      if (!force && sig === lastSigRef.current) return; // без изменений — пропускаем
+      const body = out.slice(out.indexOf('\n') + 1);
+      await renderFrom(body, sig);
+    } catch (e) {
+      if (!cancelledRef.current) {
+        setStatus(ST.EMPTY);
+        setDetail(String(e?.message || e).slice(0, 200));
+      }
     }
-    const log = await execute('cat /tmp/vite.log 2>/dev/null | tail -12', cwd);
-    setStatus(ST.ERROR);
-    setDetail((log?.output || 'Vite не ответил').slice(0, 400));
-  }, [cwd, checkVite, ru]);
+  }, [currentProject, cwd, layoutRel, renderFrom, ru, screen]);
 
+  // Горячее слежение: опрос файла раз в 1.2 с — превью само обновляется
+  // после каждого сохранения в редакторе.
   useEffect(() => {
     cancelledRef.current = false;
-    (async () => {
-      if (!cwd) { setStatus(ST.ERROR); setDetail(ru ? 'Папка проекта неизвестна' : 'Project dir unknown'); return; }
-      setStatus(ST.CHECKING);
-      const c = await checkVite();
-      if (cancelledRef.current) return;
-      if (c.http) { setStatus(ST.READY); }
-      else { await startVite(); }
-    })();
-    return () => { cancelledRef.current = true; };
+    setStatus(ST.LOADING);
+    lastSigRef.current = '';
+    refresh(true);
+    const timer = setInterval(() => { if (!cancelledRef.current) refresh(false); }, 1200);
+    return () => { cancelledRef.current = true; clearInterval(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd]);
+  }, [cwd, layoutRel]);
 
-  const stopVite = useCallback(async () => {
-    await execute('pkill -f vite 2>/dev/null; echo stopped', cwd);
-    setStatus(ST.CHECKING);
-    setDetail('');
-  }, [cwd]);
+  /** Кастомная сборка + установка: «настоящий» запуск на устройстве. */
+  const buildAndInstall = async () => {
+    if (!currentProject || status === ST.BUILDING) return;
+    setStatus(ST.BUILDING);
+    setBuildLog(ru ? 'Кастомная сборка (без Gradle)…' : 'Custom build (no Gradle)…');
+    try {
+      const r = await buildProject(currentProject, 'debug', (line) => {
+        setBuildLog((prev) => (prev + '\n' + line).slice(-4000));
+      });
+      if (!r.success) throw new Error(ru ? 'Сборка упала — см. журнал' : 'Build failed — see log');
+      const ex = await exportApk(currentProject, r.apkPath, 'debug');
+      const inst = await installApk(r.apkPath);
+      setBuildLog((prev) => prev + '\n' + (inst.success
+        ? (ru ? '✓ APK передан на установку' : '✓ APK handed to installer')
+        : (ru ? `Установка: ${inst.output}` : `Install: ${inst.output}`)));
+      if (inst.success && currentProject.packageName) {
+        setTimeout(() => launchApp(currentProject.packageName), 2500);
+      }
+      setStatus(ST.READY);
+    } catch (e) {
+      setBuildLog((prev) => prev + '\n✗ ' + String(e?.message || e));
+      setStatus(ST.READY);
+    }
+  };
+
+  const reloadLabel = lastReload
+    ? new Date(lastReload).toLocaleTimeString(ru ? 'ru-RU' : 'en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : '—';
 
   return (
     <AppScreen>
-      <TopBar
-        title={ru ? 'Живой React preview' : 'Live React preview'}
-        subtitle={`${currentProject?.name || ''} · ${screen?.name || ''} · Vite HMR`}
-        onBack={() => navigation.goBack()}
-        right={
-          <IconButton
-            name="refresh-outline"
-            label={phone ? null : (ru ? 'Перезагрузить' : 'Reload')}
-            onPress={async () => { const c = await checkVite(); if (c.http) { setStatus(ST.READY); setReloadKey(k => k + 1); } else { await startVite(); } }}
-          />
-        }
-      />
-      <View style={{ flex: 1, backgroundColor: '#fff' }}>
-        <View style={{ padding: 8, backgroundColor: '#EFF6FF', flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: 1, borderBottomColor: '#DBEAFE' }}>
-          <Icon name={status === ST.READY ? 'checkmark-circle' : 'time-outline'} size={14} color={status === ST.READY ? '#16A34A' : '#D97706'} />
-          <Text style={{ flex: 1, fontSize: 11, color: '#1E40AF' }} numberOfLines={1}>
-            {status === ST.READY ? (ru ? `Vite dev → WebView • ${PREVIEW_URL}` : `Vite dev → WebView • ${PREVIEW_URL}`)
-              : status === ST.STARTING ? (detail || (ru ? 'Запуск Vite…' : 'Starting Vite…'))
-              : status === ST.CHECKING ? (ru ? 'Проверка Vite…' : 'Checking Vite…')
-              : (ru ? 'Vite недоступен' : 'Vite unavailable')}
-          </Text>
-          {status === ST.READY ? (
-            <Pressable onPress={stopVite} style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: '#FEE2E2' }}>
-              <Text style={{ fontSize: 10, color: '#B91C1C', fontWeight: '700' }}>{ru ? 'Стоп' : 'Stop'}</Text>
-            </Pressable>
-          ) : null}
+      <TopBar title={ru ? 'Горячий предпросмотр' : 'Hot Preview'} subtitle={screen?.name || ''} navigation={navigation} />
+      <View style={{ flex: 1, flexDirection: phone ? 'column' : 'row', minWidth: 0 }}>
+        <View style={{ flex: 1, minWidth: 0, alignItems: 'center', justifyContent: 'center', padding: 12, backgroundColor: colors.bg }}>
+          {status === ST.LOADING && !html ? (
+            <View style={{ alignItems: 'center', gap: 10 }}>
+              <ActivityIndicator color={colors.primary} />
+              <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{ru ? 'Читаю макет…' : 'Reading layout…'}</Text>
+            </View>
+          ) : status === ST.EMPTY && !html ? (
+            <View style={{ alignItems: 'center', gap: 10, padding: 20 }}>
+              <Icon name="phone-portrait-outline" size={40} color={colors.textTertiary} />
+              <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center' }}>{detail || (ru ? 'Нет макета' : 'No layout')}</Text>
+              <PrimaryButton title={ru ? 'Обновить' : 'Refresh'} icon="refresh-outline" onPress={() => refresh(true)} />
+            </View>
+          ) : (
+            <View style={{ width: phone ? 344 : 394, maxWidth: '100%', flex: 1, maxHeight: phone ? 660 : 800, borderRadius: 20, overflow: 'hidden' }}>
+              <WebView
+                key={`pv-${lastReload}`}
+                originWhitelist={['*']}
+                source={{ html, baseUrl: 'about:blank' }}
+                style={{ flex: 1, backgroundColor: 'transparent' }}
+                androidLayerType="hardware"
+              />
+            </View>
+          )}
         </View>
 
-        {status === ST.READY ? (
-          <WebView
-            key={`live-${reloadKey}`}
-            ref={webviewRef}
-            source={{ uri: PREVIEW_URL }}
-            style={{ flex: 1 }}
-            javaScriptEnabled
-            domStorageEnabled
-            startInLoadingState
-            renderLoading={() => (
-              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg }}>
-                <ActivityIndicator color={colors.primary} />
-                <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 8 }}>{ru ? 'Загрузка Vite…' : 'Loading Vite…'}</Text>
-              </View>
-            )}
-            onError={() => { setStatus(ST.ERROR); setDetail(ru ? 'WebView не смог загрузить Vite' : 'WebView failed to load Vite'); }}
-            onHttpError={() => { setStatus(ST.ERROR); }}
+        <ScrollView
+          style={{ width: phone ? '100%' : 320, borderTopWidth: phone ? 1 : 0, borderLeftWidth: phone ? 0 : 1, borderColor: colors.border, backgroundColor: colors.bgCard }}
+          contentContainerStyle={{ padding: 14, gap: 10 }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Icon name="flash-outline" size={16} color={colors.success} />
+            <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700', flex: 1 }}>
+              {ru ? 'Hot reload включён' : 'Hot reload on'}
+            </Text>
+            <Text style={{ color: colors.textTertiary, fontSize: 10 }}>{reloadLabel}</Text>
+          </View>
+          <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 17 }}>
+            {ru
+              ? 'Сохраните макет в редакторе — превью перерисуется автоматически (опрос файла раз в секунду). Ресурсы @string/@color/@dimen подтягиваются из res/values.'
+              : 'Save the layout in the editor — the preview re-renders automatically (file watched once per second). @string/@color/@dimen resources are resolved from res/values.'}
+          </Text>
+          <Text style={{ color: colors.textTertiary, fontFamily: 'monospace', fontSize: 10 }} numberOfLines={2}>{layoutRel}</Text>
+
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <IconButton name="refresh-outline" label={ru ? 'Обновить' : 'Refresh'} onPress={() => refresh(true)} style={{ flex: 1 }} />
+          </View>
+
+          <PrimaryButton
+            title={status === ST.BUILDING ? (ru ? 'Собирается…' : 'Building…') : (ru ? 'Собрать и установить' : 'Build & install')}
+            icon="rocket-outline"
+            loading={status === ST.BUILDING}
+            disabled={status === ST.BUILDING}
+            onPress={buildAndInstall}
           />
-        ) : status === ST.ERROR ? (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 24, backgroundColor: colors.bg }}>
-            <Icon name="globe-outline" size={42} color={colors.warning} />
-            <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700', textAlign: 'center' }}>
-              {ru ? 'Нет соединения с Vite dev-сервером' : 'No connection to Vite dev server'}
-            </Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 11, textAlign: 'center', lineHeight: 15 }}>
-              {ru ? `Vite не отвечает на ${PREVIEW_URL}. Проверьте лог:` : `Vite not responding at ${PREVIEW_URL}. Log:`}{'\n'}{detail}
-            </Text>
-            <View style={{ flexDirection: phone ? 'column' : 'row', gap: 8, width: phone ? '100%' : undefined }}>
-              <PrimaryButton title={ru ? 'Запустить Vite' : 'Start Vite'} icon="play-outline" onPress={startVite} style={phone ? { width: '100%' } : undefined} />
-              <IconButton name="refresh-outline" label={ru ? 'Перепроверить' : 'Recheck'} onPress={async () => { setStatus(ST.CHECKING); const c = await checkVite(); setStatus(c.http ? ST.READY : ST.ERROR); }} style={phone ? { width: '100%' } : undefined} />
+          <Text style={{ color: colors.textSecondary, fontSize: 10, lineHeight: 15 }}>
+            {ru
+              ? 'Полная проверка на устройстве: кастомная сборка APK (aapt2 → javac → d8 → zipalign → apksigner), без Gradle — занимает секунды.'
+              : 'Full on-device check: custom APK build (aapt2 → javac → d8 → zipalign → apksigner), no Gradle — takes seconds.'}
+          </Text>
+          {buildLog ? (
+            <View style={{ backgroundColor: colors.terminal, borderRadius: 10, padding: 10, maxHeight: 220, overflow: 'hidden' }}>
+              <Text style={{ color: '#C9D3E3', fontFamily: 'monospace', fontSize: 9, lineHeight: 14 }} numberOfLines={40}>
+                {buildLog.slice(-2200)}
+              </Text>
             </View>
-          </View>
-        ) : (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: colors.bg }}>
-            <ActivityIndicator color={colors.primary} />
-            <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{detail || (ru ? 'Подключение к Vite…' : 'Connecting to Vite…')}</Text>
-          </View>
-        )}
+          ) : null}
+        </ScrollView>
       </View>
     </AppScreen>
   );

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">templates/minimal</string>
+    <string name="welcome_text">Built without Gradle on Storm Build CLI!</string>
+</resources>

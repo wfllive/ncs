@@ -9,7 +9,7 @@ import { execute, isAvailable } from '../utils/shellExecutor';
 import { PROJECTS_ROOT, getProjectDir, packageSegment, slugifyProject } from '../config/runtime';
 import { createDefaultProject, createDefaultScreen } from '../utils/defaultProject';
 import { raiNew } from '../utils/rai';
-import { ensureProjectIntegrity } from '../utils/composeProject';
+import { ensureJavaProjectIntegrity } from '../utils/javaProject';
 import AdsBanner from '../components/AdsBanner';
 import { cn } from "../utils/cn";
 
@@ -63,28 +63,28 @@ const ProjectsScreen = ({
   const styles = useMemo(() => createStyles(colors, compact), [colors, compact]);
 
   const copy = language === 'ru' ? {
-    recent: 'React-проекты',
-    empty: 'Создайте мобильное приложение на React + Vite + Android.',
+    recent: 'Java-проекты',
+    empty: 'Создайте нативное Android-приложение на Java + XML. Кастомная сборка без Gradle.',
     command: 'Структура проекта',
     longPress: 'Удерживайте карточку, чтобы удалить проект.',
     deleteTitle: 'Удалить проект?',
     deleteText: 'Метаданные будут удалены из конструктора. Файлы проекта останутся в /root/projects.',
-    createFailed: 'Не удалось создать React проект',
+    createFailed: 'Не удалось создать Java-проект',
     nativeRequired: 'Создание файлов требует доступ к /root/projects (Ubuntu/).',
-    preparing: 'Создаём Vite + React проект',
-    creating: 'Генерация React-приложения',
+    preparing: 'Создаём проект Java + XML',
+    creating: 'Генерация Android-приложения',
     package: 'Application ID'
   } : {
-    recent: 'React projects',
-    empty: 'Create a mobile app with React + Vite + Android.',
+    recent: 'Java projects',
+    empty: 'Create a native Android app with Java + XML. Custom build, no Gradle.',
     command: 'Project structure',
     longPress: 'Long-press a card to delete it.',
     deleteTitle: 'Delete project?',
     deleteText: 'Metadata will be removed. Files remain in /root/projects.',
-    createFailed: 'Could not create React project',
+    createFailed: 'Could not create Java project',
     nativeRequired: 'File generation requires /root/projects access.',
-    preparing: 'Creating Vite + React project',
-    creating: 'Generating React app',
+    preparing: 'Creating Java + XML project',
+    creating: 'Generating Android app',
     package: 'Application ID'
   };
 
@@ -98,12 +98,12 @@ const ProjectsScreen = ({
     const dir = getProjectDir(project);
     // Самолечение проекта при открытии (фон): восстановить отсутствующие файлы
     // шаблона (прерванное создание, случайное удаление) — пользователь ничего
-    // не замечает; затем доустановить зависимости, если node_modules нет.
+    // не замечает. Проекты Java + XML не требуют установки зависимостей.
     (async () => {
       try {
-        await ensureProjectIntegrity(project);
+        await ensureJavaProjectIntegrity(project);
+        await execute('chmod +x build.sh 2>/dev/null || true', dir);
       } catch (e) {}
-      execute('[ -f "' + dir + '/node_modules/.bin/vite" ] || (echo "install for open..."; cd "' + dir + '" && npm install --silent --no-audit --no-fund 2>&1 | tail -10; echo OPEN_YARN_OK)', '/').catch(() => {});
     })();
   };
 
@@ -142,45 +142,23 @@ const ProjectsScreen = ({
         projectDir: `${PROJECTS_ROOT}/${slug}`,
         screens: [createDefaultScreen(null, 'Home')]
       });
-      // Try to create files on disk (best effort)
+      // Создание файлов на диске: только запись шаблона — мгновенно,
+      // без скачиваний и установки зависимостей (никакого npm).
       if (isAvailable()) {
         const raiResult = await raiNew(cleanName, suggestedPackage);
         if (!raiResult?.success) {
-          // still import project even if disk write failed — user can edit in-memory
+          // Проект импортируется даже если диск недоступен — правки в памяти.
           setCreateLog(prev => prev + '\n  ⚠ ' + (raiResult?.output || '').slice(0, 300));
         } else {
-          setCreateLog(prev => prev + '\n  ✓ Vite project created: ' + project.projectDir);
-        }
-      } else {
-        setCreateLog(prev => prev + '\n  ✓ Project created (in-memory, no shell). Will be written on first save/build.');
-      }
-      // Сначала пишем файлы, потом ставим зависимости синхронно чтобы лог был виден
-      setCreateLog(prev => prev + '\n  → npm install (1-2 мин, для vite)...');
-      let yarnOk = false;
-      if (isAvailable()) {
-        const projDir = `${PROJECTS_ROOT}/${slug}`;
-        try {
-          const r = await execute('cd "' + projDir + '" && npm install --silent --no-audit --no-fund 2>&1 | tail -30; echo EXIT:$?', projDir);
-          setCreateLog(prev => prev + '\n' + String(r.output || '').slice(0, 900));
-          yarnOk = /EXIT:0/.test(r.output || '');
-          if (yarnOk) {
-            setCreateLog(prev => prev + '\n  ✓ node_modules готов — vite запустится в редакторе (Дизайн / Превью)');
-          } else {
-            // Повторная попытка (была сетевая ошибка?) — затем фоновая доустановка при открытии.
-            const r2 = await execute('cd "' + projDir + '" && npm install --silent --no-audit --no-fund 2>&1 | tail -15; echo EXIT:$?', projDir);
-            yarnOk = /EXIT:0/.test(r2.output || '');
-            setCreateLog(prev => prev + (yarnOk ? '\n  ✓ node_modules готов (установлен со второй попытки)' : '\n  ⚠ npm install не завершился — проверьте сеть; при открытии проекта установка продолжится автоматически'));
-          }
-        } catch (e) {
-          setCreateLog(prev => prev + '\n  ⚠ npm install error: ' + String(e).slice(0, 300));
+          setCreateLog(prev => prev + '\n  ✓ Java-проект создан: ' + project.projectDir);
         }
         // Проверка целостности: все файлы шаблона на диске (иначе восстановим).
         try {
-          const integ = await ensureProjectIntegrity(project);
+          const integ = await ensureJavaProjectIntegrity(project);
           setCreateLog(prev => prev + (integ?.restored?.length ? `\n  ✓ восстановлены недостающие файлы: ${integ.restored.length} шт.` : '\n  ✓ проверка файлов проекта пройдена'));
         } catch (e) {}
       } else {
-        setCreateLog(prev => prev + '\n  ✓ Project created (без shell — npm install при первой сборке)');
+        setCreateLog(prev => prev + '\n  ✓ Project created (in-memory, no shell). Will be written on first save/build.');
       }
       importProject(project);
       // Даём увидеть лог 1.5 сек перед переходом
@@ -208,7 +186,7 @@ const ProjectsScreen = ({
       marginBottom: cardGap
     }}>
         <View className={styles.cardTop}>
-          <View className={styles.projectIcon}><Icon name="logo-react" size={24} color={colors.primary} /></View>
+          <View className={styles.projectIcon}><Icon name="logo-android" size={24} color={colors.primary} /></View>
           <View style={{
             flex: 1,
             minWidth: 0
@@ -224,7 +202,7 @@ const ProjectsScreen = ({
           </View>
         </View>
         <View className={styles.metaRow}>
-          <StatusPill label="React + Vite" tone="success" />
+          <StatusPill label="Java + XML" tone="success" />
           <StatusPill label="android" tone="info" />
           <View className={styles.meta}><Icon name="layers-outline" size={13} color={colors.textTertiary} /><Text className={styles.metaText}>{item.screens?.length || 0}</Text></View>
           <View className={styles.meta}><Icon name="time-outline" size={13} color={colors.textTertiary} /><Text className={styles.metaText}>{updatedLabel}</Text></View>
@@ -232,20 +210,20 @@ const ProjectsScreen = ({
       </Pressable>;
   }, [styles, colors, language, cardGap]);
 
-  if (!isLoaded) return <AppScreen className={styles.center}><View className={styles.brand}><Icon name="logo-react" size={26} color="#FFFFFF" /></View><Text className={styles.muted}>{t('loading')}</Text></AppScreen>;
+  if (!isLoaded) return <AppScreen className={styles.center}><View className={styles.brand}><Icon name="logo-android" size={26} color="#FFFFFF" /></View><Text className={styles.muted}>{t('loading')}</Text></AppScreen>;
 
   return <AppScreen>
       <View className={styles.header} style={{
         paddingLeft: padLeft,
         paddingRight: padRight
       }}>
-        {!tiny ? <View className={styles.brand}><Icon name="logo-react" size={compact ? 22 : 25} color="#FFFFFF" /></View> : null}
+        {!tiny ? <View className={styles.brand}><Icon name="logo-android" size={compact ? 22 : 25} color="#FFFFFF" /></View> : null}
         <View style={{
           flex: 1,
           minWidth: 0
         }}>
-          <Text className={styles.title} numberOfLines={1}>{compact ? 'NovaCompose' : 'NovaCompose Studio'}</Text>
-          {width >= 520 ? <Text className={styles.subtitle} numberOfLines={1}>React + Vite · конструктор Android-приложений</Text> : null}
+          <Text className={styles.title} numberOfLines={1}>{compact ? 'NovaJava' : 'NovaJava Studio'}</Text>
+          {width >= 520 ? <Text className={styles.subtitle} numberOfLines={1}>Java + XML · конструктор Android-приложений · без Gradle</Text> : null}
         </View>
         <View className={styles.actions}>{/* ВРЕМЕННО: терминал только в debug/dev-сборке. В релизе (__DEV__ === false) кнопка скрыта — чтобы не путать пользователей и избежать лишних жалоб; вернуть можно позже или вынести тумблером в настройки. */}{__DEV__ ? <IconButton name="terminal-outline" onPress={() => navigation.navigate('Terminal')} /> : null}<IconButton name="settings-outline" onPress={() => navigation.navigate('AppSettings')} />{width >= 520 ? <PrimaryButton title={t('newProject')} icon="add" onPress={() => setCreateOpen(true)} /> : <Pressable
             onPress={() => setCreateOpen(true)}
@@ -322,7 +300,7 @@ const ProjectsScreen = ({
           paddingLeft: padLeft + 8,
           paddingRight: padRight + 8
         }}>
-          <View className={styles.emptyIcon}><Icon name="logo-react" size={40} color={colors.primary} /></View>
+          <View className={styles.emptyIcon}><Icon name="logo-android" size={40} color={colors.primary} /></View>
           <Text className={styles.emptyTitle}>{t('noProjects')}</Text>
           <Text className={styles.emptyText}>{copy.empty}</Text>
           <PrimaryButton title={t('createProject')} icon="add" onPress={() => setCreateOpen(true)} style={{
@@ -352,7 +330,7 @@ const ProjectsScreen = ({
             maxWidth: 560,
             alignSelf: 'center'
           }}>
-          <SectionCard className={styles.dialog} title={t('newProject')} icon="logo-react">
+          <SectionCard className={styles.dialog} title={t('newProject')} icon="logo-android">
             <Field label={t('projectName')} value={name} onChangeText={value => {
               setName(value);
               if (!packageName) setPackageName('');
