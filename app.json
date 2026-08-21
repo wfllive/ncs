@@ -43,8 +43,10 @@
       }
     },
     "plugins": [
+      "./plugins/with-remove-install-permission.js",
       "./plugins/with-security-guard.js",
       "./plugins/with-extract-native-libs.js",
+      "./plugins/with-build-config.js",
       "./plugins/with-rai-bundle.js",
       "./plugins/with-cleartext-preview.js",
       [
