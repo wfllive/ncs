@@ -747,7 +747,7 @@ class AptManagerModule : Module() {
             var bytes = 0L
             var count = 0
 
-            // 1) rai.sh (основной RAI бандл)
+            // 1) rai.sh (основной RAI бандл) — в /root/rai/rai.sh
             val raiDest = File(destDir, "rai.sh")
             if (raiDest.isFile && raiDest.length() > 100_000L) {
                 log.add("rai.sh already seeded (${raiDest.length()} B)")
@@ -760,18 +760,16 @@ class AptManagerModule : Module() {
                 }
             }
 
-            // 2) NCS Build scripts (fast-install, build, new-project) — раньше лежали
-            //    только в assets, а нативный модуль их не копировал, что приводило к
-            //    "TypeError: undefined is not a function" на шаге "Копирую NCS-скрипты".
-            val ncsSrcDir = "rai/ncs"
+            // 2) NCS Build scripts в /root/rai/ncs/ (как они лежат в assets)
+            val ncsAssetsDir = "rai/ncs"
             val ncsDestDir = File(destDir, "ncs")
             ncsDestDir.mkdirs()
             val ncsFiles = listOf("fast-install.sh", "ncs-build.sh", "new-project.sh")
             for (f in ncsFiles) {
                 val dest = File(ncsDestDir, f)
-                val assetPath = "$ncsSrcDir/$f"
+                val assetPath = "$ncsAssetsDir/$f"
                 if (dest.isFile && dest.length() > 100L) {
-                    log.add("$f already seeded (${dest.length()} B)")
+                    log.add("$f already seeded in rai/ncs/ (${dest.length()} B)")
                     bytes += dest.length()
                     count++
                     continue
@@ -780,10 +778,30 @@ class AptManagerModule : Module() {
                     bytes += dest.length()
                     count++
                 } else {
-                    // Не падаем — скрипт мог не быть включен в ассеты (старый APK).
-                    // В этом случае установка JDK/SDK будет использовать запасной
-                    // путь в коде (скачивание/встроенные команды).
                     log.add("$f missing from APK assets — skipping")
+                }
+            }
+
+            // 3) ВАЖНО: разложить NCS-скрипты в ~/.ncs/bin/
+            //    JS-воркфлоу установки дёргает `bash /root/.ncs/bin/fast-install.sh`
+            //    (а не /root/rai/ncs/fast-install.sh) — без этого шага шаг 3/5
+            //    падает с "No such file or directory".
+            val ncsHomeBin = File(getProotRootfsDir(), "root/.ncs/bin")
+            ncsHomeBin.mkdirs()
+            for (f in ncsFiles) {
+                val src = File(ncsDestDir, f)
+                if (!src.isFile) continue
+                val dest = File(ncsHomeBin, f)
+                // Перезаписываем всегда: версия в APK — эталон.
+                try {
+                    src.copyTo(dest, overwrite = true)
+                    dest.setExecutable(true, false)
+                    dest.setReadable(true, false)
+                    bytes += dest.length()
+                    count++
+                    log.add("deployed $f -> /root/.ncs/bin/$f")
+                } catch (e: Exception) {
+                    log.add("failed to deploy $f to .ncs/bin: ${e.message}")
                 }
             }
 
@@ -792,6 +810,7 @@ class AptManagerModule : Module() {
                 "output" to "RAI + NCS bundle seeded from APK assets ($count files)",
                 "path" to "/root/rai/rai.sh",
                 "ncsDir" to "/root/rai/ncs",
+                "ncsBin" to "/root/.ncs/bin",
                 "files" to count,
                 "bytes" to bytes,
                 "log" to log.joinToString("\n"),

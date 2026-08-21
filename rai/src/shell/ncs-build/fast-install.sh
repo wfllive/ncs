@@ -364,9 +364,9 @@ EOF
 done
 ok "ncs добавлен в PATH (.bashrc/.profile)"
 
-# Копируем соседние скрипты туда же (ncs-build.sh, new-project.sh)
+# Копируем соседние скрипты туда же (ncs-build.sh, new-project.sh) и сам fast-install.sh
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-for f in ncs-build.sh new-project.sh; do
+for f in fast-install.sh ncs-build.sh new-project.sh; do
   [ -f "$SCRIPT_DIR/$f" ] && cp "$SCRIPT_DIR/$f" "$NCS_HOME/bin/$f"
 done
 chmod +x "$NCS_HOME/bin/"*.sh 2>/dev/null || true

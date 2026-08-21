@@ -127,9 +127,11 @@ function findChild(lines, parent, kwRegex) {
   return null;
 }
 
-// Раскрывает однострочный блок вида `foo { a; b; c }` на отдельные строки.
-// В отличие от наивного split(';'), учитывает вложенные { }, чтобы не разрывать
-// внутренние блоки (например `release { ...; ... }` остаётся единым).
+// Раскрывает однострочный блок вида `foo { a; b { c; d } e }` на отдельные
+// строки. Учитывает вложенные { } и строки, чтобы не разрывать внутренние
+// блоки. ВАЖНО: в Gradle DSL точка с запятой необязательна, поэтому разделителем
+// верхнего уровня считаем ЛИБО ';', ЛИБО пару '}' после которой на верхнем
+// уровне (depth==0) начинается новый идентификатор-блок (`} signingConfigs {`).
 function ensureMultiline(lines, idx) {
   const line = lines[idx];
   const open = line.indexOf('{');
@@ -142,29 +144,67 @@ function ensureMultiline(lines, idx) {
   const innerIndent = indent + '    ';
   const after = line.slice(cl.col + 1);
 
-  // Разбиваем innerRaw на элементы верхнего уровня (не разделяя ';' внутри вложенных {})
+  // Разбиваем innerRaw на элементы верхнего уровня (depth==0). Разделители:
+  //   1. ';' на глубине 0 (классика Java/Groovy)
+  //   2. '}' на глубине 0, после которой (через пробелы) идёт идентификатор
+  //      и открывающая '{' — это начало следующего sibling-блока в Gradle DSL.
   const parts = [];
-  let buf = '', depth = 0, inStr = null;
+  let buf = '', depth = 0, inStr = null, inLineComment = false, inBlockComment = false;
+  const push = () => { const s = buf.trim(); if (s) parts.push(s); buf = ''; };
+
   for (let k = 0; k < innerRaw.length; k++) {
     const ch = innerRaw[k];
+    const nx = innerRaw[k + 1];
+
     if (inStr) {
       buf += ch;
       if (ch === '\\' && k + 1 < innerRaw.length) { buf += innerRaw[++k]; continue; }
       if (ch === inStr) inStr = null;
       continue;
     }
-    if (ch === '"' || ch === "'") { inStr = ch; buf += ch; continue; }
-    if (ch === '{') { depth++; buf += ch; continue; }
-    if (ch === '}') { depth--; buf += ch; continue; }
-    if (ch === ';' && depth === 0) {
-      const s = buf.trim(); if (s) parts.push(s);
-      buf = '';
+    if (inBlockComment) {
+      buf += ch;
+      if (ch === '*' && nx === '/') { buf += nx; k++; inBlockComment = false; }
       continue;
     }
+    if (inLineComment) {
+      buf += ch;
+      if (ch === '\n') inLineComment = false;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { inStr = ch; buf += ch; continue; }
+    if (ch === '/' && nx === '/') { inLineComment = true; buf += ch; continue; }
+    if (ch === '/' && nx === '*') { inBlockComment = true; buf += ch; buf += nx; k++; continue; }
+
+    if (ch === '{') { depth++; buf += ch; continue; }
+    if (ch === '}') {
+      depth--;
+      buf += ch;
+      if (depth === 0) {
+        // Проверяем: после '}' через пробелы идёт идентификатор и '{'?
+        let m = k + 1;
+        while (m < innerRaw.length && /[ \t]/.test(innerRaw[m])) m++;
+        let idEnd = m;
+        while (idEnd < innerRaw.length && /[A-Za-z0-9_]/.test(innerRaw[idEnd])) idEnd++;
+        if (idEnd > m) {
+          // есть идентификатор — смотрим что после
+          let n = idEnd;
+          while (n < innerRaw.length && /[ \t]/.test(innerRaw[n])) n++;
+          if (n < innerRaw.length && innerRaw[n] === '{') {
+            // Это разделитель между sibling-блоками: push и продолжаем
+            // (открывающая '{' нового блока попадёт в следующий part).
+            push();
+            continue;
+          }
+        }
+        // Обычная ';' или конец — проверяем ниже
+      }
+      continue;
+    }
+    if (ch === ';' && depth === 0) { push(); continue; }
     buf += ch;
   }
-  const tail = buf.trim();
-  if (tail) parts.push(tail);
+  push();
 
   const replacement = [line.slice(0, open + 1)];
   for (const p of parts) replacement.push(innerIndent + p);
@@ -191,6 +231,67 @@ function stripMarkedBlocks(lines) {
 // Удаляет диапазон строк [start, end] ВКЛЮЧИТЕЛЬНО.
 function deleteRange(lines, start, end) {
   lines.splice(start, end - start + 1);
+}
+
+// Ищет в строке позицию, где начинается вложенный блок верхнего уровня (depth=0),
+// ПЕРЕД которым есть не-pure-whitespace контент. Например:
+//     namespace "x" compileSdk 35 defaultConfig {
+// → режем перед "defaultConfig" на "namespace \"x\" compileSdk 35 " и "defaultConfig {".
+// Возвращает {before, after} или null, если резать нечего.
+function splitInlineBlockHeader(line) {
+  // Нас интересуют только строки, начинающиеся с отступа (т.е. внутри android {}).
+  const m0 = line.match(/^(\s*)(\S.*)$/);
+  if (!m0) return null;
+  const [, ind, body] = m0;
+  if (!/[a-zA-Z_]/.test(body)) return null;
+  // Проходим по body, игнорируя строки/комментарии, ища идентификатор, за которым
+  // (через пробелы) идёт '{' и ПЕРЕД которым есть какой-то не-whitespace контент
+  // на глубине 0.
+  let depth = 0, i = 0, inStr = null, sawContent = false;
+  while (i < body.length) {
+    const ch = body[i], nx = body[i+1];
+    if (inStr) {
+      if (ch === '\\' && i + 1 < body.length) { i += 2; continue; }
+      if (ch === inStr) inStr = null;
+      i++; continue;
+    }
+    if (ch === '"' || ch === "'") { inStr = ch; sawContent = true; i++; continue; }
+    if (ch === '/' && nx === '/') { sawContent = true; break; } // коммент до конца
+    if (ch === '/' && nx === '*') { sawContent = true; i += 2; continue; } // грубо — пропускаем
+    if (ch === '{') { depth++; sawContent = true; i++; continue; }
+    if (ch === '}') {
+      depth--; sawContent = true;
+      // Закрыли верхнеуровневый sibling — следующий идентификатор должен
+      // считаться потенциальным началом нового блока, а не продолжением stmt.
+      if (depth === 0) {
+        // пропускаем пробелы и ищем точку разреза: см. случай A выше,
+        // но здесь в рамках одной строки будем просто помечать sawContent=false,
+        // а разрезание всё равно делает фаза 0 — ищем `} идент {` regex.
+      }
+      i++; continue;
+    }
+    if (ch === ';') { sawContent = false; i++; continue; }
+    if (/[A-Za-z_]/.test(ch) && depth === 0 && sawContent && i > 0) {
+      // Не режем ПОСЛЕ буквы/цифры/_ — иначе слово "buildFeatures" распадётся
+      // на "b" / "uildFeatures" и т.п. Режем только если перед i — не буква/цифра/_
+      // (т.е. перед нами действительно граница токенов: пробел, ';', '}' и т.п.).
+      const prev = body[i - 1];
+      if (!/[A-Za-z0-9_]/.test(prev)) {
+        let s = i, e = i;
+        while (e < body.length && /[A-Za-z0-9_]/.test(body[e])) e++;
+        let n = e;
+        while (n < body.length && /[ \t]/.test(body[n])) n++;
+        if (n < body.length && body[n] === '{') {
+          const before = (ind + body.slice(0, i)).replace(/[ \t]+$/, '');
+          const after = ind + body.slice(i);
+          if (before.trim().length > 0) return { before, after };
+        }
+      }
+    }
+    if (/\S/.test(ch)) sawContent = true;
+    i++;
+  }
+  return null;
 }
 
 // =========================================================================
@@ -272,40 +373,80 @@ const checkBlock = [
 function editBuildGradle(contents) {
   let lines = contents.split(/\r?\n/);
 
-  // 0. Сначала раскрываем все однострочные блоки (чтобы дальше не возиться с ними),
-  //    затем сносим старые NCS-блоки и legacy-вставки.
-  for (let pass = 0; pass < 10; pass++) {
+  // 0. Нормализация: разбиваем слипшиеся на одной строке sibling-блоки
+  //    вида "} signingConfigs {" / "} buildTypes {" и пары "stmt stmt block {"
+  //    (например `namespace "x" compileSdk 35 defaultConfig {`) внутри android {}.
+  //    Иначе findChild не найдёт блоки как отдельных потомков.
+  for (let pass = 0; pass < 20; pass++) {
+    let changed = false;
+    const a = findAndroid(lines);
+    if (!a) break;
+    for (let i = a.line + 1; i < a.closeLine; i++) {
+      const line = lines[i];
+      // Случай A: "} foo {"
+      const m = line.match(/^(\s*)\}[ \t]*([a-zA-Z_][a-zA-Z0-9_]*)\s*(\{.*)$/);
+      if (m) {
+        const [, ind, kw, rest] = m;
+        lines[i] = `${ind}}`;
+        lines.splice(i + 1, 0, `${ind}${kw} ${rest}`);
+        changed = true; break;
+      }
+      // Случай B: на строке есть не-{блок} контент, а потом идентификатор и '{'
+      // на глубине 0 (т.е. начинается новый прямой потомок android).
+      // Разбиваем строку перед этим идентификатором.
+      const spl = splitInlineBlockHeader(line);
+      if (spl) {
+        lines.splice(i, 1, spl.before, spl.after);
+        changed = true; break;
+      }
+    }
+    if (!changed) break;
+  }
+
+  // 0а. Если сам android { ... } — однострочный, разворачиваем его ПЕРВЫМ делом.
+  //     Без этого циклы ниже (которые ходят от a.line+1 до a.closeLine-1)
+  //     не увидят ни одного блока на многострочных проходах.
+  for (let pass = 0; pass < 5; pass++) {
+    const a0 = findAndroid(lines);
+    if (!a0) break;
+    if (a0.closeLine !== a0.line) break;
+    ensureMultiline(lines, a0.line);
+  }
+
+  // 0б. Раскрываем все однострочные блоки вида `foo { ... }` внутри android {}
+  //     на отдельные строки (многопроходно). Начинаем обход ПЕРЕД открывающей
+  //     '{' android (depth=-1), чтобы сам android-блок, если он однострочный,
+  //     тоже попал под раздачу (при проходе с depth=0 он развернётся первым).
+  for (let pass = 0; pass < 30; pass++) {
     let any = false;
     const a = findAndroid(lines);
     if (a) {
-      for (const parent of [a,
-        findChild(lines, a, /^signingConfigs$/),
-        findChild(lines, a, /^buildTypes$/),
-      ]) {
-        if (!parent) continue;
-        // Ищем все прямые блоки внутри parent через перебор фигурных скобок
-        let depth = 0, i = parent.line, j = parent.openCol;
-        while (i <= parent.closeLine) {
-          const line = lines[i];
-          while (j < line.length) {
-            const ch = line[j], nx = line[j+1];
-            if (ch === '"' || ch === "'") { j = skipQuoted(line, j); continue; }
-            if (ch === '/' && nx === '/') break;
-            if (ch === '/' && nx === '*') { j += 2; let done=false; while(i<=parent.closeLine+1){const l=lines[i];while(j<l.length){if(l[j]==='*'&&l[j+1]==='/'){j+=2;done=true;break;}j++;}if(done)break;i++;j=0;} continue; }
-            if (ch === '{') {
-              if (depth === 1 && i > parent.line) {
-                // нашли открывающую скобку прямого потомка
-                const cl = matchCloseBrace(lines, i, j, 0);
-                if (cl && cl.line === i) { ensureMultiline(lines, i); any = true; i = -1; j = 0; break; }
+      let depth = -1, i = a.line, j = a.openCol;
+      outer: while (i <= a.closeLine) {
+        const line = lines[i];
+        while (j < line.length) {
+          const ch = line[j], nx = line[j+1];
+          if (ch === '"' || ch === "'") { j = skipQuoted(line, j); continue; }
+          if (ch === '/' && nx === '/') break;
+          if (ch === '/' && nx === '*') { j += 2; let done=false; while(i<=a.closeLine+1){const l=lines[i];while(j<l.length){if(l[j]==='*'&&l[j+1]==='/'){j+=2;done=true;break;}j++;}if(done)break;i++;j=0;} continue; }
+          if (ch === '{') {
+            depth++;
+            if (depth >= 0) {
+              const cl = matchCloseBrace(lines, i, j, 0);
+              if (cl && cl.line === i) {
+                ensureMultiline(lines, i);
+                any = true;
+                i = -1; j = 0;
+                break outer;
               }
-              depth++;
-            } else if (ch === '}') { depth--; if (depth <= 0 && (i > parent.line || j > parent.openCol)) { i = lines.length; break; } }
-            j++;
+            }
+          } else if (ch === '}') {
+            depth--;
+            if (depth < -1 && (i > a.line || j > a.openCol)) { i = lines.length; break outer; }
           }
-          if (i === -1) break;
-          i++; j = 0;
+          j++;
         }
-        if (any) break;
+        i++; j = 0;
       }
     }
     if (!any) break;
@@ -500,10 +641,21 @@ function editBuildGradle(contents) {
   if (sc) lines.splice(sc.line + 1, 0, ...releaseSignBlock);
 
   // 7. Пересчитать позиции и вставить check-блок в buildTypes.release.
+  //    Если блока release ещё нет (чистый шаблон) — создаём его.
   andr = findAndroid(lines);
   bt = findChild(lines, andr, /^buildTypes$/);
   if (bt) {
     let rel = findChild(lines, bt, /^release$/);
+    if (!rel) {
+      // Вставляем пустой release { } после последнего потомка buildTypes
+      // (перед закрывающей '}'), чтобы туда можно было положить check-блок.
+      const btIndent = (lines[bt.line].match(/^(\s*)/) || ['', '    '])[1];
+      const ind = btIndent + '    ';
+      lines.splice(bt.closeLine, 0, `${ind}release {`, `${ind}}`);
+      andr = findAndroid(lines);
+      bt = findChild(lines, andr, /^buildTypes$/);
+      rel = bt && findChild(lines, bt, /^release$/);
+    }
     if (rel) {
       ensureMultiline(lines, rel.line);
       const bt2 = findChild(lines, findAndroid(lines), /^buildTypes$/);
