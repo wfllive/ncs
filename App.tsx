@@ -68,7 +68,7 @@ const AppRoot = () => {
           return;
         }
         // A persisted marker is only a setup checkpoint, not proof that the toolchain still
-        // works. Every cold start must execute `rai status` before projects are unlocked.
+        // works. Every cold start must run the live environment probe before projects unlock.
         const ready = await probeRaiReady();
         if (ready) {
           if (!cancelled) setStage('ready');

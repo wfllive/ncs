@@ -41,7 +41,7 @@ const RaiSetupScreen = ({ onComplete, resume = false, resumeStep = null }) => {
   const statusOutputRef = useRef('');
 
   const copy = {
-    title: ru ? 'Установка RAI' : 'RAI setup',
+    title: ru ? 'Установка среды (Storm Build)' : 'Environment setup (Storm Build)',
     subtitle: ru
       ? 'Реальный терминал Ubuntu (proot). Команды идут прямо в нём — можно вводить вручную.'
       : 'Real Ubuntu terminal (proot). Commands run right in it — you can type manually.',
@@ -53,8 +53,8 @@ const RaiSetupScreen = ({ onComplete, resume = false, resumeStep = null }) => {
     continueAnyway: ru ? 'Продолжить в проекты' : 'Continue to projects',
     done: ru ? 'Среда готова' : 'Environment is ready',
     doneText: ru
-      ? 'Java, Android SDK и RAI установлены. Сейчас откроется список проектов.'
-      : 'Java, Android SDK and RAI are installed. Opening the project list.',
+      ? 'JDK и Storm Build готовы: сборка проектов работает без Gradle. Сейчас откроется список проектов.'
+      : 'JDK and Storm Build are ready: projects build without Gradle. Opening the project list.',
     background: ru
       ? 'Установка идёт в фоне (foreground service + wakelock). Закрыли приложение? При следующем запуске она сама продолжится с того же шага.'
       : 'Setup runs in the background (foreground service + wakelock). Closed the app? It resumes automatically from the same step.',

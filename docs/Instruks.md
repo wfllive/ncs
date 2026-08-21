@@ -15,10 +15,10 @@
 ```
 APK конструктора (React Native / Expo dev-build)
   └── proot-окружение Ubuntu arm64 (устанавливается при первом запуске)
-        └── среда: JDK 17 + Android SDK + Storm Build
-              ├── rai install base --no-upgrade → JDK 17, настройки proot
-              ├── rai install sdk               → нативный ARM Android SDK
-              ├── Storm Build (бандл из APK)    → кастомный сборщик без Gradle
+        └── среда: JDK 17 + python3 + Storm Build (без RAI и без Gradle)
+              ├── apt: JDK 17, python3, curl/zip/unzip
+              ├── Storm Build (бандл из APK)    → кастомный сборщик
+              ├── storm setup                   → aapt2, android.jar, R8, bundletool
               └── bash build.sh (в проекте)     → storm build apk/aab на телефоне
 ```
 
@@ -33,12 +33,14 @@ APK конструктора (React Native / Expo dev-build)
 |---|---|
 | Телефон | Android 7+ (API 24), процессор **arm64-v8a / aarch64** (`uname -m` → `aarch64`) |
 | ОЗУ | от 3 ГБ (комфортно 6+) |
-| Свободно на диске | от 4 ГБ (Ubuntu ~1 ГБ, JDK ~0.5 ГБ, SDK ~1 ГБ) |
+| Свободно на диске | от 3 ГБ (Ubuntu ~1 ГБ, JDK ~0.5 ГБ, инструменты ~0.5 ГБ) |
 | Компьютер (для сборки конструктора) | Node.js 18+, npm или yarn |
-| Интернет | при первом запуске (rootfs, apt, JDK, SDK) |
+| Интернет | при первом запуске (rootfs, apt, `storm setup`) |
 
-> **RAI не требует GitHub**: он вендорен в `rai/` и зашит в APK
-> (`assets/rai/rai.sh`). Android SDK качается из `HomuHomu833/android-sdk-custom`.
+> **RAI больше не нужен**: сборка идёт кастомным **Storm Build** (вендорен в
+> `storm/`, бандл зашит в APK). `storm setup` сам скачивает aapt2,
+> `android.jar`, `r8.jar` и `bundletool.jar` — отдельный Android SDK и Gradle
+> не требуются.
 
 ---
 
@@ -113,15 +115,16 @@ React + Vite + Android WebView проект в облаке (Ubuntu + JDK 17 + A
    скачивает и распаковывает arm64 rootfs. Занимает несколько минут,
    **можно свернуть приложение** — установка идёт в фоне (уведомление).
 3. **Установка среды** — следующая страница выполняет по шагам
-   (ускоренный профиль — без полного `apt upgrade` и без Node.js):
-   `apt update` → утилиты → локальный `bash /root/rai/rai.sh` (из APK, без
-   GitHub) → `rai install base --no-upgrade` (JDK 17) → `rai install sdk` →
-   **Storm Build** (распаковка бандла из APK) → `rai status`. Прогресс виден
-   в журнале; при обрыве установка продолжится с того же шага.
+   (ускоренный профиль — без полного `apt upgrade`, без Node.js, без RAI):
+   `apt update` → JDK 17 + python3 + утилиты (одним вызовом) →
+   **Storm Build** (распаковка бандла из APK, без GitHub) →
+   `storm setup --api 34` (скачивает aapt2, android.jar, r8.jar,
+   bundletool.jar) → проверка окружения. Прогресс виден в журнале; при
+   обрыве установка продолжится с того же шага.
 4. На этом же экране можно сразу выдать разрешения:
    - **Память** — «All files access» (нужно для сохранения APK в `/sdcard/Download`);
    - **Уведомления** — статус фоновых установок/сборок.
-5. После успешного `rai status` откроется **список проектов** (главный экран).
+5. После успешной проверки окружения откроется **список проектов** (главный экран).
 
 ---
 
@@ -160,12 +163,12 @@ React + Vite + Android WebView проект в облаке (Ubuntu + JDK 17 + A
 | Путь в репозитории | Что это |
 |---|---|
 | `src/` | JS/RN код конструктора (экраны, редактор, сборка, хранилище) |
-| `modules/apt-manager/` | нативный модуль: rootfs, разрешения, фоновая служба, RAI bundle |
+| `modules/apt-manager/` | нативный модуль: rootfs, разрешения, фоновая служба, seed бандла |
 | `modules/termux-terminal/` | нативный терминал + proot-движок |
 | `android/` | нативная обёртка (Expo prebuild) |
-| `rai/` | **вендоренные исходники RAI** + собранный `rai.sh` |
-| `modules/apt-manager/android/src/main/assets/rai/` | копия `rai.sh` внутри APK (переживает `expo prebuild --clean`) |
-| `plugins/` | config-плагины Expo (native libs, RAI bundle) |
+| `storm/` | **вендоренные исходники Storm Build** (движок + шаблоны) |
+| `modules/apt-manager/android/src/main/assets/storm/` | копия `storm-bundle.zip` внутри APK (переживает `expo prebuild --clean`) |
+| `plugins/` | config-плагины Expo (native libs, Storm bundle) |
 | `web/`, `src/ide/` | код-редактор (CodeMirror) внутри приложения |
 | `scripts/` | сборщики и тесты (`build-editor.mjs`, `bdg.js`, …) |
 | `react-android-project/` | пример структуры генерируемого проекта (справка) |
@@ -176,26 +179,25 @@ React + Vite + Android WebView проект в облаке (Ubuntu + JDK 17 + A
 |---|---|
 | `/root/projects/` | создаваемые проекты |
 | `/root/android-sdk/` | Android SDK (build-tools, platforms) |
-| `/root/rai/rai.sh` | бандл RAI, засеянный из APK |
-| `/root/.rai-setup.done` | маркер «среда готова» |
+| `/root/storm/` | распакованный сборщик (засеян из APK) |
+| `/root/.storm/tools/` | aapt2, android.jar, r8.jar, bundletool.jar (качает `storm setup`) |
+| `/root/.storm-setup.done` | маркер «среда готова» |
 
 ---
 
-## 7. Как обновить RAI (после правок в `rai/src/`)
+## 7. Как обновить сборщик (после правок в `storm/`)
+
+Сборщик — это обычный исходный код в папке `storm/`. В APK он попадает как
+единый архив, который собирает плагин `plugins/with-storm-bundle.js`:
 
 ```bash
-cd rai
-node scripts/build.js release     # пересборка бандла → build/release/rai.sh
-cp build/release/rai.sh rai.sh
-cp build/release/rai.sh.sha256 rai.sh.sha256
-# обновить version.json (sha256, published)
-cd ..
-# копия для APK обновится при следующем prebuild, или вручную:
-cp rai/rai.sh modules/apt-manager/android/src/main/assets/rai/rai.sh
+# правите файлы в storm/ (storm_engine/, templates/…)
+npx expo prebuild          # плагин упакует storm/ → assets/storm/storm-bundle.zip
 ```
 
-Адреса источников (SDK, Gradle, Ubuntu) — в `rai/src/shell/lib/sources.sh`,
-каждый переопределяется переменной окружения (`RAI_SRC_SDK_REPO`, …).
+Бандл распаковывается на устройстве в `/root/storm`; инструменты
+(`android.jar`, `r8.jar`, `bundletool.jar`, aapt2) докачивает `storm setup` —
+их зеркала описаны в `storm/storm_engine/env.py`.
 
 ---
 
@@ -218,9 +220,10 @@ npm run editor         # пересборка встроенного редак�
 
 | Симптом | Решение |
 |---|---|
-| «Termux из Google Play не годится» (в доках RAI) | Это про standalone-Termux, нам он не нужен — конструктор ставит своё proot-окружение сам |
-| `aapt2: Exec format error` | Процессор не arm64 (32-битный) — RAI требует aarch64 |
-| Установка RAI упала на шаге | Нажмите «Повторить» — готовые шаги пропускаются, установка продолжится |
+| «Termux из Google Play не годится» | Это про standalone-Termux, нам он не нужен — конструктор ставит своё proot-окружение сам |
+| `aapt2: Exec format error` | Процессор не arm64 (32-битный) — сборщик требует aarch64 |
+| Установка среды упала на шаге | Нажмите «Повторить» — готовые шаги пропускаются, установка продолжится |
+| `storm setup` не качает `android.jar` | Проверьте интернет; при недоступности зеркал сборка возьмёт любую доступную платформу |
 | Сборка APK «висит» | Это нормально (первая сборка Gradle долгая). Можно свернуть — фоновая служба держит процесс |
 | APK не появляется в `/sdcard/Download` | Выдайте разрешение «Память» (Настройки → Память и фон) |
 | Не хватает места | Освободите 6+ ГБ; кэш Gradle можно очистить из проекта (Build → Очистить) |

@@ -1,42 +1,43 @@
 /**
- * raiSetup.js — первый запуск RAI-окружения (страница после установки Ubuntu).
+ * raiSetup.ts — установка среды сборки (без RAI).
  *
- * RAI — вендоренный в этот репозиторий (папка rai/): исходники + собранный
- * бандл rai.sh лежат в проекте и в APK (assets модуля apt-manager, путь
- * assets/rai/rai.sh — переживает expo prebuild --clean). GitHub-репозиторий
- * RAI не используется: нативный модуль копирует бандл в rootfs
- * (/root/rai/rai.sh), и установка запускается локально.
+ * Исторически модуль ставил окружение через RAI; теперь весь пайплайн живёт
+ * в **Storm Build** — кастомном сборщике без Gradle, который вендорен в
+ * `storm/` и зашит в APK. Установщик делает только то, что Storm сам не
+ * может сделать без прав пакета:
  *
- * Быстрый профиль установки (проекты Java + XML, кастомная сборка без Gradle):
- *   1. apt update                   (БЕЗ полного apt upgrade — это минуты)
- *   2. одним вызовом: JDK 17 + curl/wget/zip/unzip/ca-certificates
- *      (Node.js больше не нужен — проекты не используют npm)
- *   3. bash /root/rai/rai.sh        (локальный бандл из APK)
- *   4. rai install sdk              (нативный ARM Android SDK)
- *   5. rai status                   (проверка) → marker /root/.rai-setup.done
+ *   1. apt update                       (быстро, без полного upgrade)
+ *   2. apt: JDK 17, python3, curl/zip/unzip
+ *   3. Storm Build из бандла в APK      (seedStormBundle → /root/storm)
+ *   4. storm setup --api 34             (сам качает aapt2, android.jar,
+ *                                        r8.jar, bundletool.jar в ~/.storm)
+ *   5. проверка окружения               (Java + aapt2 + платформа)
+ *   6. маркер готовности /root/.storm-setup.done
  *
- * Каждый шаг идемпотентен: при повторном входе (после обрыва/фонового
- * сворачивания) уже выполненные шаги быстро пропускаются, установка
- * продолжается с места обрыва.
+ * Каждый шаг идемпотентен: при повторном входе готовые шаги пропускаются,
+ * установка продолжается с места обрыва. Если на устройстве уже стоит старый
+ * SDK от RAI ($HOME/android-sdk), Storm найдёт его — повторных скачиваний нет.
  */
 import * as apt from '../../modules/apt-manager/src/index';
 import { execute, persistentStreamExecute } from './shellExecutor';
 import { updateBackground } from './background';
 
-export const RAI_BUNDLE_DIR = '/root/rai';
-export const RAI_BUNDLE = `${RAI_BUNDLE_DIR}/rai.sh`;
-export const SETUP_MARKER = '/root/.rai-setup.done';
-export const SETUP_STEP_FILE = '/root/.rai-step'; // текущий/последний шаг (для «продолжить после закрытия»)
-export const SETUP_STEP_DONE = '/root/.rai-step.done'; // маркер окончания шага (PTY-режим)
-export const SETUP_LOG = '/root/.rai-setup.log';
-export const SETUP_STATUS_FILE = '/root/.rai-status.txt'; // вывод `rai status` для парсинга
-export const ANDROID_HOME = '/root/android-sdk';
-export const RAI_VERSION = '0.0.1'; // версия вендоренного RAI (rai/version.json)
 export const STORM_BUNDLE = '/root/storm-bundle.zip';
 export const STORM_DIR = '/root/storm';
+export const SETUP_MARKER = '/root/.storm-setup.done';
+export const SETUP_STEP_FILE = '/root/.storm-step'; // текущий/последний шаг (для «продолжить после закрытия»)
+export const SETUP_STEP_DONE = '/root/.storm-step.done'; // маркер окончания шага (PTY-режим)
+export const SETUP_LOG = '/root/.storm-setup.log';
+export const SETUP_STATUS_FILE = '/root/.storm-status.txt'; // вывод проверки окружения для парсинга
+
+// Совместимость со старыми импортами (эти артефакты больше не используются).
+export const RAI_BUNDLE_DIR = '/root/rai';
+export const RAI_BUNDLE = `${RAI_BUNDLE_DIR}/rai.sh`;
+export const ANDROID_HOME = '/root/android-sdk';
+export const RAI_VERSION = '0.0.1';
 
 /**
- * Установка Storm Build из бандла (офлайн): распаковка в /root/storm,
+ * Команда установки сборщика из бандла: распаковка в /root/storm,
  * лаунчер в PATH, быстрая самопроверка (`storm templates`).
  */
 export const STORM_INSTALL_CMD =
@@ -46,78 +47,23 @@ export const STORM_INSTALL_CMD =
   `ln -sf ${STORM_DIR}/storm /usr/local/bin/storm && ` +
   `storm templates`;
 
-const shq = (v = '') => `'${String(v).replace(/'/g, `'\\''`)}'`;
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// Быстрая проверка «шаг уже сделан»: вывод DONE → пропустить.
-const isDone = async (cmd) => {
-  try {
-    const r = await execute(`${cmd}; echo RC_$?`, '/');
-    return /DONE/.test(r.output || '') && /RC_0\b/.test(r.output || '');
-  } catch (e) {
-    return false;
-  }
-};
-
-/** Запустить команду со стримингом вывода; вернуть { success, output } (output полный). */
-const streamRun = async (command, onLine, workDir = '/', stepId = 'setup') => {
-  const res = await persistentStreamExecute(
-    command,
-    workDir,
-    (line) => { try { onLine && onLine(line); } catch (_) {} },
-    {
-      label: `RAI setup: ${stepId}`,
-      kind: 'rai-setup',
-      metadata: { stepId },
-    },
-  );
-  return { success: res?.success === true && (res?.exitCode ?? 0) === 0, output: res?.output || '' };
-};
-
-/** Выполнить шаг: check (skip?) → cmd/run. */
-const runStep = async (step: any, onLine: (line: string) => void, persistStep: (id: string) => any = () => {}) => {
-  const startedAt = Date.now();
-  const lines = [];
-  const emit = (line) => { lines.push(line); try { onLine && onLine(line); } catch (_) {} };
-  persistStep(step.id);
-
-  // 0) Проверка «уже сделано»
-  if (step.check) {
-    try {
-      if (await isDone(step.check)) {
-        return { id: step.id, status: 'skipped', output: lines.join('\n'), ms: Date.now() - startedAt };
-      }
-    } catch (_) {}
-  }
-
-  // 1) Кастомный раннер (seed бандла, rai status, финиш)
-  if (typeof step.run === 'function') {
-    const out = await step.run(emit);
-    if (out === false) {
-      return { id: step.id, status: 'failed', output: lines.join('\n'), ms: Date.now() - startedAt };
-    }
-    return { id: step.id, status: 'done', output: lines.join('\n'), ms: Date.now() - startedAt, extra: out };
-  }
-
-  // 2) Обычная shell-команда со стримингом
-  const res = await streamRun(`${step.cmd} 2>&1; echo STEP_EXIT:$?`, emit, '/', step.id);
-  const ok = /STEP_EXIT:0\b/.test(res.output || '');
-  if (!ok) {
-    emit(`\n❌ Шаг не завершился (exit != 0)`);
-    return { id: step.id, status: 'failed', output: lines.join('\n'), ms: Date.now() - startedAt };
-  }
-  return { id: step.id, status: 'done', output: lines.join('\n'), ms: Date.now() - startedAt };
-};
-
-// ---------------------------------------------------------------------------
-// Шаги
-// ---------------------------------------------------------------------------
+/**
+ * Поиск инструментов для проверок: aapt2/aapt и android.jar.
+ * Источники: ~/.storm/tools (storm setup), PATH, старый SDK от RAI
+ * ($ANDROID_HOME — он продолжает работать, если уже установлен).
+ */
+const ENV_PROBE =
+  'SDK="${ANDROID_HOME:-$HOME/android-sdk}"; ' +
+  'AAPT2="$(command -v aapt2 2>/dev/null || command -v aapt 2>/dev/null || true)"; ' +
+  '[ -z "$AAPT2" ] && [ -x "$HOME/.storm/tools/aapt2" ] && AAPT2="$HOME/.storm/tools/aapt2"; ' +
+  '[ -z "$AAPT2" ] && AAPT2="$(ls "$SDK"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1)"; ' +
+  'JAR="$(ls "$HOME"/.storm/tools/android-*.jar 2>/dev/null | tail -1)"; ' +
+  '[ -z "$JAR" ] && JAR="$(ls "$SDK"/platforms/android-*/android.jar 2>/dev/null | sort -V | tail -1)"';
 
 export const SETUP_STEPS = [
   {
     // БЫСТРО: только `apt update` — полный `apt upgrade` убран (минуты работы
-    // и сотни МБ трафика; для сборки он не нужен). Повреждённая база dpkg
-    // после прерванной установки чинится на месте.
+    // и сотни МБ трафика; для сборки он не нужен).
     id: 'apt',
     title: { ru: 'apt update (быстро, без upgrade)', en: 'apt update (fast, no upgrade)' },
     cmd:
@@ -128,78 +74,28 @@ export const SETUP_STEPS = [
     check: '[ -n "$(ls /var/lib/apt/lists/ 2>/dev/null | head -1)" ] && echo DONE || echo TODO',
   },
   {
-    // Всё необходимое одним вызовом: утилиты сети/архивов + python3
-    // (на нём работает кастомный сборщик Storm Build).
+    // Всё, что Storm не ставит сам: JDK 17 (javac/keytool/jarsigner),
+    // python3 (движок сборщика), сетевые и архивные утилиты.
     id: 'tools',
-    title: { ru: 'Утилиты: curl, zip, python3', en: 'Utilities: curl, zip, python3' },
+    title: { ru: 'JDK 17, python3, утилиты', en: 'JDK 17, python3, utilities' },
     cmd:
       'export DEBIAN_FRONTEND=noninteractive; ' +
       '(dpkg --configure -a 2>/dev/null || true); ' +
-      'apt install -y --no-install-recommends curl wget zip unzip ca-certificates python3',
-    check: 'command -v curl >/dev/null 2>&1 && command -v wget >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1 && command -v zip >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 && echo DONE || echo TODO',
-  },
-  // Node.js больше не устанавливается: проекты Java + XML не используют
-  // npm/Vite, и для кастомной сборки он не нужен. Это экономит 1-2 минуты.
-  {
-    id: 'rai',
-    title: { ru: 'Установка RAI (локальный бандл)', en: 'Install RAI (local bundle)' },
-    // Спец-шаг: бандл из APK (assets/rai/rai.sh) копируется нативным модулем
-    // в rootfs (/root/rai/rai.sh) и запускается локально — GitHub не нужен.
-    // Первый запуск bash rai.sh сам ставит CLI в ~/.rai и лаунчер `rai`.
-    check: `command -v rai >/dev/null 2>&1 && echo DONE || echo TODO`,
-    run: async (emit) => {
-      emit('$ seed RAI bundle (assets/rai/rai.sh → /root/rai/rai.sh)');
-      let seeded: any = { success: false };
-      try { seeded = await apt.seedRaiBundle(); } catch (e) { seeded = { success: false, output: String(e) }; }
-      if (!seeded?.success) {
-        // Файл мог быть засеян ранее напрямую — проверяем перед тем как падать.
-        const probe = await execute(`[ -s ${shq(RAI_BUNDLE)} ] && echo YES || echo NO`, '/');
-        if (!/YES/.test(probe.output || '')) {
-          emit(`❌ ${seeded?.output || 'seedRaiBundle failed'}`);
-          return false;
-        }
-        emit('⚠ бандл уже есть в rootfs — продолжаем');
-      } else {
-        emit(`✓ ${seeded.output} (${Math.round((seeded.bytes || 0) / 1024)} KB)`);
-      }
-      emit('');
-      emit(`$ bash ${RAI_BUNDLE}  (локально, без GitHub)`);
-      const res = await streamRun(`bash ${shq(RAI_BUNDLE)} 2>&1`, emit, '/', 'rai');
-      const check = await execute('command -v rai >/dev/null 2>&1 && echo RAI_OK || echo RAI_MISSING', '/');
-      if (!/RAI_OK/.test(check.output || '')) {
-        emit('❌ команда rai не найдена после установки');
-        return false;
-      }
-      return res;
-    },
+      'apt install -y --no-install-recommends openjdk-17-jdk-headless python3 curl wget zip unzip ca-certificates',
+    check: 'command -v javac >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1 && command -v zip >/dev/null 2>&1 && echo DONE || echo TODO',
   },
   {
-    // JDK 17 + починка среды (DNS/зеркало/локаль/права /tmp) — но БЕЗ полного
-    // `apt upgrade` (--no-upgrade): это главный выигранный кусок времени.
-    id: 'base',
-    title: { ru: 'rai install base --no-upgrade (JDK 17)', en: 'rai install base --no-upgrade (JDK 17)' },
-    cmd: 'rai install base --no-upgrade',
-    check: 'command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1 && echo DONE || echo TODO',
-  },
-  {
-    id: 'sdk',
-    title: { ru: 'rai install sdk (нативный ARM SDK)', en: 'rai install sdk (native ARM SDK)' },
-    cmd: 'rai install sdk',
-    check: `[ -d ${ANDROID_HOME}/build-tools ] && [ -d ${ANDROID_HOME}/platforms ] && echo DONE || echo TODO`,
-  },
-  {
-    // Storm Build — кастомный сборщик без Gradle (вендорен в storm/, бандл
-    // внутри APK). Установка офлайн: распаковка архива + лаунчер в PATH.
+    // Storm Build — бандл из APK (assets/storm/storm-bundle.zip) копируется
+    // нативным модулем в rootfs и распаковывается локально. GitHub не нужен.
     id: 'storm',
-    title: { ru: 'Storm Build (кастомный сборщик)', en: 'Storm Build (custom builder)' },
-    cmd: STORM_INSTALL_CMD,
-    check: '[ -x /root/storm/storm ] && command -v storm >/dev/null 2>&1 && echo DONE || echo TODO',
+    title: { ru: 'Storm Build (локальный бандл)', en: 'Storm Build (local bundle)' },
+    check: `[ -x ${STORM_DIR}/storm ] && command -v storm >/dev/null 2>&1 && echo DONE || echo TODO`,
     run: async (emit) => {
       emit('$ seed Storm bundle (assets/storm/storm-bundle.zip → /root/storm-bundle.zip)');
       let seeded: any = { success: false };
       try { seeded = await apt.seedStormBundle(); } catch (e) { seeded = { success: false, output: String(e) }; }
       if (!seeded?.success) {
-        const probe = await execute('[ -s /root/storm-bundle.zip ] && echo YES || echo NO', '/');
+        const probe = await execute(`[ -s ${STORM_BUNDLE} ] && echo YES || echo NO`, '/');
         if (!/YES/.test(probe.output || '')) {
           emit(`❌ ${seeded?.output || 'seedStormBundle failed'}`);
           return false;
@@ -218,16 +114,28 @@ export const SETUP_STEPS = [
     },
   },
   {
+    // Инструменты сборки: storm setup сам скачивает aapt2, android.jar,
+    // r8.jar и bundletool.jar в ~/.storm/tools (зеркала, контроль целостности).
+    // Если на устройстве уже есть SDK (например, от старой установки),
+    // ничего не скачивается — инструменты находятся по ANDROID_HOME.
+    id: 'toolchain',
+    title: { ru: 'storm setup — aapt2, android.jar, R8', en: 'storm setup — aapt2, android.jar, R8' },
+    cmd: 'storm setup --api 34',
+    check: `${ENV_PROBE}; [ -n "$AAPT2" ] && [ -n "$JAR" ] && echo DONE || echo TODO`,
+  },
+  {
+    // Финальная проверка: печатает сводку «Java / build-tools / platforms»
+    // (формат совместим с парсером ниже и со статус-экраном).
     id: 'status',
-    title: { ru: 'rai status — проверка компонентов', en: 'rai status — verify components' },
+    title: { ru: 'Проверка окружения сборки', en: 'Verify build environment' },
     always: true,
     run: async (emit) => {
-      const res = await streamRun('rai status 2>&1', emit, '/', 'status');
-      const parsed = parseRaiStatus(res.output);
+      const res = await streamRun(`${ENV_STATUS_CMD} 2>&1 | tee ${SETUP_STATUS_FILE}`, emit, '/', 'status');
+      const parsed = parseEnvStatus(res.output);
       emit('');
       emit(parsed.ok
-        ? '✓ Java + build-tools + platforms на месте'
-        : '❌ компоненты неполные: Java/сборка/платформы не найдены');
+        ? '✓ JDK + aapt2 + платформа на месте — среда готова'
+        : '❌ компоненты неполные: JDK/aapt2/платформа не найдены');
       return parsed.ok;
     },
   },
@@ -243,11 +151,18 @@ export const SETUP_STEPS = [
   },
 ];
 
+/** Команда сводки окружения (формат строк — как у прежнего `rai status`). */
+export const ENV_STATUS_CMD =
+  `echo "Java: $(javac -version 2>&1 | head -1 || echo нет)"; ` +
+  `${ENV_PROBE}; ` +
+  `echo "build-tools: \${AAPT2:-нет}"; ` +
+  `echo "platforms: $(basename "$JAR" 2>/dev/null || echo нет)"`;
+
 // ---------------------------------------------------------------------------
-// Парсер вывода `rai status`
+// Парсер сводки окружения
 // ---------------------------------------------------------------------------
 
-export const parseRaiStatus = (output = '') => {
+export const parseEnvStatus = (output = '') => {
   const java = /Java\s*:\s*([^\n]+)/.exec(output);
   const bt = /build-tools\s*:\s*([^\n]+)/.exec(output);
   const pl = /platforms\s*:\s*([^\n]+)/.exec(output);
@@ -255,7 +170,7 @@ export const parseRaiStatus = (output = '') => {
   const ok = Boolean(
     java && bt && pl &&
     /\d/.test(java[1]) && !no.test(java[1]) &&
-    /\d/.test(bt[1]) && !no.test(bt[1]) &&
+    /\//.test(bt[1]) && !no.test(bt[1]) &&
     /android/i.test(pl[1]) && !no.test(pl[1]),
   );
   return {
@@ -266,19 +181,76 @@ export const parseRaiStatus = (output = '') => {
     output,
   };
 };
+/** Совместимость со старым именем. */
+export const parseRaiStatus = parseEnvStatus;
 
 // ---------------------------------------------------------------------------
 // Прогон всей установки с пропуском готовых шагов
 // ---------------------------------------------------------------------------
 
-const workflowCommandForStep = (step: any) => {
-  if (step.id === 'rai') {
-    return `bash ${shq(RAI_BUNDLE)} && command -v rai >/dev/null 2>&1`;
+const shq = (v = '') => `'${String(v).replace(/'/g, `'\\''`)}'`;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const isDone = async (cmd) => {
+  try {
+    const r = await execute(`${cmd}; echo RC_$?`, '/');
+    return /DONE/.test(r.output || '') && /RC_0\b/.test(r.output || '');
+  } catch (e) {
+    return false;
   }
+};
+
+/** Запустить команду со стримингом вывода; вернуть { success, output }. */
+const streamRun = async (command, onLine, workDir = '/', stepId = 'setup') => {
+  const res = await persistentStreamExecute(
+    command,
+    workDir,
+    (line) => { try { onLine && onLine(line); } catch (_) {} },
+    {
+      label: `Env setup: ${stepId}`,
+      kind: 'env-setup',
+      metadata: { stepId },
+    },
+  );
+  return { success: res?.success === true && (res?.exitCode ?? 0) === 0, output: res?.output || '' };
+};
+
+const runStep = async (step: any, onLine: (line: string) => void, persistStep: (id: string) => any = () => {}) => {
+  const startedAt = Date.now();
+  const lines = [];
+  const emit = (line) => { lines.push(line); try { onLine && onLine(line); } catch (_) {} };
+  persistStep(step.id);
+
+  if (step.check) {
+    try {
+      if (await isDone(step.check)) {
+        return { id: step.id, status: 'skipped', output: lines.join('\n'), ms: Date.now() - startedAt };
+      }
+    } catch (_) {}
+  }
+
+  if (typeof step.run === 'function') {
+    const out = await step.run(emit);
+    if (out === false) {
+      return { id: step.id, status: 'failed', output: lines.join('\n'), ms: Date.now() - startedAt };
+    }
+    return { id: step.id, status: 'done', output: lines.join('\n'), ms: Date.now() - startedAt, extra: out };
+  }
+
+  const res = await streamRun(`${step.cmd} 2>&1; echo STEP_EXIT:$?`, emit, '/', step.id);
+  const ok = /STEP_EXIT:0\b/.test(res.output || '');
+  if (!ok) {
+    emit(`\n❌ Шаг не завершился (exit != 0)`);
+    return { id: step.id, status: 'failed', output: lines.join('\n'), ms: Date.now() - startedAt };
+  }
+  return { id: step.id, status: 'done', output: lines.join('\n'), ms: Date.now() - startedAt };
+};
+
+const workflowCommandForStep = (step: any) => {
   if (step.id === 'status') {
-    return `rai status 2>&1 | tee ${shq(SETUP_STATUS_FILE)}; ` +
+    return `${ENV_STATUS_CMD} 2>&1 | tee ${shq(SETUP_STATUS_FILE)}; ` +
       `grep -qE 'Java[[:space:]]*:[[:space:]]*[0-9]' ${shq(SETUP_STATUS_FILE)} && ` +
-      `grep -qE 'build-tools[[:space:]]*:[[:space:]]*[0-9]' ${shq(SETUP_STATUS_FILE)} && ` +
+      `grep -qE 'build-tools[[:space:]]*:[[:space:]]*/' ${shq(SETUP_STATUS_FILE)} && ` +
       `grep -qE 'platforms[[:space:]]*:[[:space:]]*android' ${shq(SETUP_STATUS_FILE)}`;
   }
   if (step.id === 'marker') {
@@ -287,10 +259,11 @@ const workflowCommandForStep = (step: any) => {
   return step.cmd || 'true';
 };
 
-/** Build one deterministic shell command for the complete setup workflow.
- * Android persists and replays this command as one job, so no transition depends on JS being alive.
+/** Одна детерминированная команда для всего воркфлоу установки.
+ * Android держит и воспроизводит её как одну задачу, поэтому ни один переход
+ * не зависит от жизни JS-процесса.
  */
-export const buildRaiSetupWorkflowCommand = () => {
+export const buildSetupWorkflowCommand = () => {
   const lines = [
     'run_nova_step() {',
     '  nova_id="$1"; nova_title="$2"; nova_check="$3"; nova_body="$4"',
@@ -320,24 +293,29 @@ export const buildRaiSetupWorkflowCommand = () => {
   lines.push(`rm -f ${shq(SETUP_STEP_FILE)} ${shq(SETUP_STEP_DONE)}`);
   return lines.join('\n');
 };
+/** Совместимость со старым именем. */
+export const buildRaiSetupWorkflowCommand = buildSetupWorkflowCommand;
 
-export const runRaiSetup = async ({ onStepStart, onStepEnd, onLine }) => {
-  // Seeding is a fast native asset copy and must happen before the durable shell workflow. Once
-  // copied, every expensive/networked setup stage is owned by the foreground-service supervisor.
+/** Seed бандла сборщика до запуска устойчивого шелл-воркфлоу. */
+const seedStormBeforeWorkflow = async () => {
   let seeded: any = { success: false };
-  try { seeded = await apt.seedRaiBundle(); } catch (e) { seeded = { success: false, output: String(e) }; }
+  try { seeded = await apt.seedStormBundle(); } catch (e) { seeded = { success: false, output: String(e) }; }
   if (!seeded?.success) {
-    const probe = await execute(`[ -s ${shq(RAI_BUNDLE)} ] && echo YES || echo NO`, '/');
+    const probe = await execute(`[ -s ${shq(STORM_BUNDLE)} ] && echo YES || echo NO`, '/');
     if (!/YES/.test(probe.output || '')) {
-      return { ok: false, summary: [{ id: 'rai', status: 'failed', output: seeded?.output || 'seedRaiBundle failed' }] };
+      return { ok: false, summary: [{ id: 'storm', status: 'failed', output: seeded?.output || 'seedStormBundle failed' }] };
     }
   }
-  // Бандл Storm Build — тоже офлайн-копия из APK (нужна шагу 'storm').
-  try { await apt.seedStormBundle(); } catch (e) { /* проверится на шаге */ }
+  return { ok: true };
+};
+
+export const runRaiSetup = async ({ onStepStart, onStepEnd, onLine }) => {
+  const seeded = await seedStormBeforeWorkflow();
+  if (!seeded.ok) return seeded;
 
   const byId = Object.fromEntries(SETUP_STEPS.map(step => [step.id, step]));
   const states = new Map<string, string>();
-  const command = buildRaiSetupWorkflowCommand();
+  const command = buildSetupWorkflowCommand();
   const result = await persistentStreamExecute(
     command,
     '/',
@@ -360,9 +338,9 @@ export const runRaiSetup = async ({ onStepStart, onStepEnd, onLine }) => {
       try { onStepEnd && onStepEnd(id, step, { status, output: detail || '' }); } catch (_) {}
     },
     {
-      label: 'RAI setup',
-      kind: 'rai-setup-workflow',
-      metadata: { workflow: 'rai-setup', version: 1 },
+      label: 'Env setup',
+      kind: 'env-setup-workflow',
+      metadata: { workflow: 'env-setup', version: 2 },
     },
   );
   const summary = SETUP_STEPS
@@ -372,16 +350,13 @@ export const runRaiSetup = async ({ onStepStart, onStepEnd, onLine }) => {
 };
 
 // ---------------------------------------------------------------------------
-// PTY-режим: команды выполняются ВНУТРИ интерактивного терминала (Termux PTY),
-// а не в отдельных процессах. Терминал сам рисует вывод (цвета, курсор, можно
-// вводить команды руками). JS узнаёт об окончании шага по файлу-маркеру.
+// PTY-режим: команды выполняются ВНУТРИ интерактивного терминала (Termux PTY).
+// JS узнаёт об окончании шага по файлу-маркеру.
 // ---------------------------------------------------------------------------
 
 const ptyStepCommand = (step) => {
   switch (step.id) {
-    case 'rai': return `bash ${shq(RAI_BUNDLE)}`;
-    // tee: вывод и в терминал, и в файл (для парсинга статуса)
-    case 'status': return `rai status 2>&1 | tee ${shq(SETUP_STATUS_FILE)}`;
+    case 'status': return `${ENV_STATUS_CMD} 2>&1 | tee ${shq(SETUP_STATUS_FILE)}`;
     case 'marker': return `echo ok > ${shq(SETUP_MARKER)}`;
     default: return step.cmd;
   }
@@ -389,7 +364,8 @@ const ptyStepCommand = (step) => {
 
 const ptyStepTimeout = (step) => {
   if (step.id === 'status' || step.id === 'marker') return 5 * 60 * 1000;
-  return 120 * 60 * 1000; // apt/upgrade/sdk могут идти долго
+  if (step.id === 'toolchain') return 60 * 60 * 1000; // скачивание инструментов может идти долго
+  return 120 * 60 * 1000;
 };
 
 const waitForMarker = async (marker, intervalMs, timeoutMs) => {
@@ -405,20 +381,12 @@ const waitForMarker = async (marker, intervalMs, timeoutMs) => {
   return '';
 };
 
-/**
- * Прогон установки в интерактивном терминале.
- * @param {object} opts
- * @param {{write:(string)=>void}} opts.terminal — обёртка над TerminalView.writeText
- * @param {(id:string, step:object)=>void} opts.onStepStart
- * @param {(id:string, step:object, res:{status:string, output?:string})=>void} opts.onStepEnd
- * @param {(parsed:object)=>void} [opts.onStatusOutput] — результат parseRaiStatus (шаг status)
- */
+/** Прогон установки в интерактивном терминале. */
 export const runRaiSetupPty = async ({ terminal, onStepStart, onStepEnd, onStatusOutput }) => {
   const summary = [];
   const markerWrite = async (path, value) => {
     try { await execute(`echo ${shq(value)} > ${shq(path)}`, '/'); } catch (_) {}
   };
-  // Сброс маркеров перед стартом
   try { await execute(`rm -f ${shq(SETUP_STEP_FILE)} ${shq(SETUP_STEP_DONE)} ${shq(SETUP_STATUS_FILE)}`, '/'); } catch (_) {}
 
   for (const [index, step] of SETUP_STEPS.entries()) {
@@ -436,35 +404,17 @@ export const runRaiSetupPty = async ({ terminal, onStepStart, onStepEnd, onStatu
       } catch (_) {}
     }
 
-    // 1) JS-прелюдия: шаги 'rai' и 'storm' требуют seed бандлов из APK в rootfs
-    if (step.id === 'rai') {
-      let seeded: any = { success: false };
-      try { seeded = await apt.seedRaiBundle(); } catch (e) { seeded = { success: false, output: String(e) }; }
-      if (!seeded?.success) {
-        const probe = await execute(`[ -s ${shq(RAI_BUNDLE)} ] && echo YES || echo NO`, '/');
-        if (!/YES/.test(probe.output || '')) {
-          try { onStepEnd && onStepEnd(step.id, step, { status: 'failed', output: seeded.output }); } catch (_) {}
-          summary.push({ id: step.id, status: 'failed' });
-          return { ok: false, summary };
-        }
-      }
-    }
+    // 1) JS-прелюдия: шаг 'storm' требует seed бандла из APK в rootfs
     if (step.id === 'storm') {
-      let seeded: any = { success: false };
-      try { seeded = await apt.seedStormBundle(); } catch (e) { seeded = { success: false, output: String(e) }; }
-      if (!seeded?.success) {
-        const probe = await execute('[ -s /root/storm-bundle.zip ] && echo YES || echo NO', '/');
-        if (!/YES/.test(probe.output || '')) {
-          try { onStepEnd && onStepEnd(step.id, step, { status: 'failed', output: seeded.output }); } catch (_) {}
-          summary.push({ id: step.id, status: 'failed' });
-          return { ok: false, summary };
-        }
+      const seeded = await seedStormBeforeWorkflow();
+      if (!seeded.ok) {
+        try { onStepEnd && onStepEnd(step.id, step, { status: 'failed', output: seeded.summary?.[0]?.output }); } catch (_) {}
+        summary.push({ id: step.id, status: 'failed' });
+        return { ok: false, summary };
       }
     }
 
     // 2) Команда в PTY с маркерами начала/конца + заголовок шага в терминале.
-    //    Заголовок и маркеры оборачиваем в shq(): в title есть `&&`, кавычки и
-    //    русский текст — в двойных кавычках echo это сломало бы команду.
     const cmd = ptyStepCommand(step);
     const title = step.title?.ru || step.id;
     const header = shq(`── [${index + 1}/${SETUP_STEPS.length}] ${title} ──`);
@@ -493,7 +443,7 @@ export const runRaiSetupPty = async ({ terminal, onStepStart, onStepEnd, onStatu
     // 3) Пост-обработка: шаг 'status' — распарсить сохранённый вывод
     if (step.id === 'status') {
       const st = await execute(`cat ${shq(SETUP_STATUS_FILE)} 2>/dev/null`, '/');
-      const parsed = parseRaiStatus(st.output || '');
+      const parsed = parseEnvStatus(st.output || '');
       try { onStatusOutput && onStatusOutput(parsed); } catch (_) {}
       if (!parsed.ok) {
         try { onStepEnd && onStepEnd(step.id, step, { status: 'failed', output: st.output }); } catch (_) {}
@@ -508,7 +458,6 @@ export const runRaiSetupPty = async ({ terminal, onStepStart, onStepEnd, onStatu
     await sleep(150);
   }
 
-  // Финал: маркер готовности уже записан шагом 'marker'; чистим временные
   try { await execute(`rm -f ${shq(SETUP_STEP_FILE)} ${shq(SETUP_STEP_DONE)}`, '/'); } catch (_) {}
   return { ok: true, summary };
 };
@@ -516,35 +465,28 @@ export const runRaiSetupPty = async ({ terminal, onStepStart, onStepEnd, onStatu
 export const RAI_READY_SENTINEL = '@@NOVA_RAI_READY@@';
 export const RAI_NOT_READY_SENTINEL = '@@NOVA_RAI_NOT_READY@@';
 
-/** Exact sentinel matching prevents `NOT_READY` from being mistaken for `READY`. */
 export const isRaiProbeReady = (output = '') => String(output)
   .split(/\r?\n/)
   .some(line => line.trim() === RAI_READY_SENTINEL);
 
 /**
- * Готова ли RAI-среда (для стартового гейта): всегда запускаем настоящий
- * `rai status`. Маркер служит только checkpoint и никогда не обходит проверку.
+ * Готова ли среда сборки (стартовый гейт): живой шелл-зонд —
+ * JDK + aapt2/aapt + android.jar (из ~/.storm или старого SDK).
+ * Маркер служит только checkpoint'ом и никогда не обходит проверку.
  */
 export const probeRaiReady = async () => {
   try {
     const r = await execute(
       `mkdir -p /root; ` +
-      'if command -v rai >/dev/null 2>&1; then ' +
-      '  out=$(rai status 2>&1); rai_rc=$?; ' +
-      `  printf '%s\\n' "$out" > ${shq(SETUP_STATUS_FILE)}; ` +
-      '  if [ "$rai_rc" -eq 0 ] && ' +
-      '    echo "$out" | grep -qE "Java[[:space:]]*:[[:space:]]*[0-9]" && ' +
-      '    echo "$out" | grep -qE "build-tools[[:space:]]*:[[:space:]]*[0-9]" && ' +
-      '    echo "$out" | grep -qE "platforms[[:space:]]*:[[:space:]]*android"; then ' +
-      `      echo ok > ${shq(SETUP_MARKER)}; ` +
-      `      rm -f ${shq(SETUP_STEP_FILE)} ${shq(SETUP_STEP_DONE)}; ` +
-      `      echo ${shq(RAI_READY_SENTINEL)}; ` +
-      '    else ' +
-      `      rm -f ${shq(SETUP_MARKER)}; ` +
-      `      echo ${shq(RAI_NOT_READY_SENTINEL)}; ` +
-      '    fi; ' +
+      `${ENV_PROBE}; ` +
+      'if command -v javac >/dev/null 2>&1 && [ -n "$AAPT2" ] && [ -n "$JAR" ]; then ' +
+      `  printf 'Java: %s\\n' "$(javac -version 2>&1 | head -1)"; ` +
+      `  printf 'build-tools: %s\\n' "$AAPT2"; ` +
+      `  printf 'platforms: %s\\n' "$(basename "$JAR")"; ` +
+      `  echo ok > ${shq(SETUP_MARKER)}; ` +
+      `  rm -f ${shq(SETUP_STEP_FILE)} ${shq(SETUP_STEP_DONE)}; ` +
+      `  echo ${shq(RAI_READY_SENTINEL)}; ` +
       'else ' +
-      `  : > ${shq(SETUP_STATUS_FILE)}; ` +
       `  rm -f ${shq(SETUP_MARKER)}; ` +
       `  echo ${shq(RAI_NOT_READY_SENTINEL)}; ` +
       'fi',
@@ -558,11 +500,9 @@ export const probeRaiReady = async () => {
 
 /**
  * Статус установки для «продолжить после закрытия»:
- *  - 'done'     — checkpoint-маркер есть; готовность всё равно подтверждает probeRaiReady();
- *  - 'running'  — идёт сейчас (в памяти) — не используется, зовём на старте;
- *  - 'step:<id>'— установка не завершена, остановились на шаге <id>
- *                 (или он был последним записанным) → можно продолжить;
- *  - 'none'     — установка даже не начиналась.
+ *  - 'done'      — checkpoint-маркер есть (готовность подтверждает probeRaiReady);
+ *  - 'step:<id>' — установка не завершена, остановились на шаге <id>;
+ *  - 'none'      — установка даже не начиналась.
  */
 export const getRaiSetupStatus = async () => {
   try {
@@ -571,7 +511,7 @@ export const getRaiSetupStatus = async () => {
       `if [ -f ${shq(SETUP_STEP_FILE)} ]; then echo "STEP:$(cat ${shq(SETUP_STEP_FILE)} 2>/dev/null)"; else echo NONE; fi`,
       '/',
     );
-    const out = String(r.output || '').trim();
+    const out = String(r?.output || '').trim();
     if (out === 'DONE') return 'done';
     if (out.startsWith('STEP:')) return `step:${out.slice(5).trim()}`;
     return 'none';
@@ -581,6 +521,8 @@ export const getRaiSetupStatus = async () => {
 };
 
 export default {
-  SETUP_STEPS, runRaiSetup, probeRaiReady, getRaiSetupStatus, parseRaiStatus,
-  RAI_BUNDLE_DIR, RAI_BUNDLE, SETUP_MARKER, SETUP_STEP_FILE, ANDROID_HOME, RAI_VERSION,
+  SETUP_STEPS, runRaiSetup, runRaiSetupPty, probeRaiReady, getRaiSetupStatus,
+  parseEnvStatus, parseRaiStatus, ENV_STATUS_CMD,
+  STORM_BUNDLE, STORM_DIR, STORM_INSTALL_CMD,
+  SETUP_MARKER, SETUP_STEP_FILE, ANDROID_HOME, RAI_VERSION,
 };

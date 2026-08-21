@@ -393,9 +393,9 @@ cd "$(dirname "$0")"
 SLUG="${slug}"
 START_TS=$(date +%s)
 
-# Окружение: SDK ставит «rai install sdk» в $HOME/android-sdk.
-# Storm ищет инструменты по ANDROID_HOME — задаём явно, чтобы не зависеть
-# от профиля шелла (команды в proot запускаются не всегда как login-шелл).
+# Окружение: если есть старый SDK ($HOME/android-sdk) — Storm использует его,
+# иначе берёт инструменты из ~/.storm/tools (их ставит «storm setup»).
+# ANDROID_HOME задаём явно, чтобы не зависеть от профиля шелла в proot.
 export ANDROID_HOME="\${ANDROID_HOME:-$HOME/android-sdk}"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 

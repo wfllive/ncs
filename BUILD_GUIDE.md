@@ -38,13 +38,17 @@ storm deps fetch          # сборка делает это автоматич�
 
 ## Где что берётся
 
-- `ANDROID_HOME` (или `~/android-sdk`) — SDK от `rai install sdk`:
-  `build-tools/*` (aapt2, d8, zipalign, apksigner) и `platforms/*`;
-- JDK 17 — от `rai install base --no-upgrade`;
+- **инструменты сборки ставит сам `storm setup`** в `~/.storm/tools`:
+  aapt2 (статический бинарник под архитектуру), `android.jar`, `r8.jar`,
+  `bundletool.jar`. Gradle и отдельный Android SDK не требуются;
+- если на устройстве уже есть `ANDROID_HOME`/`~/android-sdk` (например, от
+  прежней установки), Storm использует его — повторных скачиваний нет;
+- JDK 17 (`javac`, `keytool`, `jarsigner`) и python3 ставит установщик через
+  `apt` (шаг «JDK 17, python3, утилиты»);
 - `storm.m` — манифест проекта (пакет, версии, пути, подпись, зависимости);
   `plugin.auto false` — обновления плагина без сети не предпринимаются;
 - если точного `android.jar` под `compile` нет, Storm попробует докачать его
-  в `~/.storm/tools`, иначе возьмёт любую установленную платформу.
+  в `~/.storm/tools`, иначе возьмёт любую доступную платформу.
 
 ## Артефакты
 

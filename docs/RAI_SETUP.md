@@ -1,71 +1,64 @@
-# Первый запуск: Ubuntu → RAI → проекты
+# Первый запуск: Ubuntu → среда сборки (Storm Build) → проекты
 
-После установки Ubuntu (rootfs) приложение открывает страницу **«Установка RAI»**,
-которая выполняет скрипт установки из README RAI.
+После установки Ubuntu (rootfs) приложение открывает страницу **«Установка
+среды»**, которая готовит всё для кастомной сборки без Gradle. **RAI в этом
+процессе больше не участвует** — весь пайплайн обеспечивает вендоренный
+сборщик [Storm Build](https://github.com/wfllive/Storm-Build).
 
-> **RAI вендорен в этот репозиторий** — папка `rai/` (исходники + собранный
-> бандл `rai.sh`). GitHub-репозиторий RAI для работы не нужен: бандл лежит в
-> assets модуля `apt-manager` (`modules/apt-manager/android/src/main/assets/rai/rai.sh`),
-> нативный модуль копирует его в rootfs (`/root/rai/rai.sh`), и установка
-> запускается локально. Место выбрано так, чтобы `expo prebuild --clean` его
-> не трогал (prebuild пересоздаёт только `android/`, а не `modules/`).
+> **Storm вендорен в этот репозиторий** — папка `storm/` (исходники движка и
+> шаблоны). Плагин `plugins/with-storm-bundle.js` при `expo prebuild` пакует
+> его в `modules/apt-manager/android/src/main/assets/storm/storm-bundle.zip`;
+> нативный модуль копирует архив в rootfs (`/root/storm-bundle.zip`), и
+> установка запускается локально — без GitHub.
 
 ## Что выполняется (по шагам)
 
-Ускоренный профиль под проекты **Java + XML с кастомной сборкой (без Gradle)**:
-
 ```
 1. apt update                   ← БЕЗ полного «apt upgrade» (экономия минут)
-2. apt install -y --no-install-recommends curl wget zip unzip ca-certificates python3
-3. bash /root/rai/rai.sh        ← локальный бандл из APK, GitHub не нужен
-4. rai install base --no-upgrade← JDK 17 + настройки proot (без повторного upgrade)
-5. rai install sdk              ← нативный ARM Android SDK
-6. Storm Build                  ← бандл из APK → /root/storm-bundle.zip,
+2. apt install -y --no-install-recommends openjdk-17-jdk-headless python3
+                                 curl wget zip unzip ca-certificates
+3. Storm Build                  ← бандл из APK → /root/storm-bundle.zip,
                                    распаковка в /root/storm + лаунчер в PATH
-7. rai status                   ← проверка: Java + build-tools + platforms
-8. touch /root/.rai-setup.done  ← маркер готовности
+4. storm setup --api 34         ← сам качает aapt2, android.jar, r8.jar,
+                                   bundletool.jar в ~/.storm/tools
+5. Проверка окружения           ← Java + aapt2 + платформа
+6. touch /root/.storm-setup.done← маркер готовности
 ```
 
-Что убрано относительно старого профиля и почему:
+Что убрано и почему:
 
-- **`apt upgrade -y`** — самый долгий шаг (сотни пакетов). Для сборки он не
-  нужен, достаточно `apt update`;
-- **Node.js** — проекты больше не используют npm/Vite (они на Java + XML),
-  поэтому и сам `node`, и `npm install` при создании проекта удалены;
-- `rai install base` вызывается с **`--no-upgrade`**, чтобы не повторять
-  полный апгрейд внутри.
+- **`apt upgrade -y`** — самый долгий шаг (сотни пакетов), для сборки не нужен;
+- **Node.js** — проекты на Java + XML, npm/Vite больше не используются;
+- **RAI** (`rai install base/sdk/status`) — его роль (JDK, SDK, инструменты)
+  теперь выполняют один вызов `apt` и `storm setup`;
+- отдельный **Android SDK** — не требуется: aapt2/android.jar/r8/bundletool
+  Storm кладёт в `~/.storm/tools`. Если старый SDK уже стоит
+  (`~/android-sdk`), он используется без повторных скачиваний.
 
-Сборка проектов идёт кастомным сборщиком **Storm Build** (вендорен в `storm/`,
-бандл зашит в assets APK как `storm/storm-bundle.zip`, нативный модуль
-`seedStormBundle` копирует его в rootfs — как бандл RAI).
-
-После успешного `rai status` приложение переходит на главный экран со списком
+После успешной проверки приложение переходит на главный экран со списком
 проектов. Если установку прервали (приложение закрыли) — при следующем запуске
 готовые шаги пропускаются, установка продолжается с места обрыва.
 
-## Откуда берётся RAI
+## Откуда берётся Storm
 
-- Исходники и бандл: `rai/` в корне репозитория (см. `rai/README.md` — как
-  править и пересобирать).
-- Конфиг-плагин `plugins/with-rai-bundle.js` кладёт `rai/rai.sh` в assets
-  модуля `apt-manager` при `expo prebuild`:
-  `modules/apt-manager/android/src/main/assets/rai/rai.sh` (это место prebuild
-  не перегенерирует).
-- Нативный модуль `apt-manager` (`seedRaiBundle`) при первом запуске копирует
-  бандл в rootfs: `/root/rai/rai.sh`.
-- Страница установки запускает `bash /root/rai/rai.sh` — первый запуск сам
-  ставит CLI в `~/.rai/<версия>` и лаунчер `rai` в `PATH`.
+- Исходники: `storm/` в корне репозитория (движок `storm_engine/`, шаблоны
+  `templates/`).
+- Конфиг-плагин `plugins/with-storm-bundle.js` при `expo prebuild` собирает
+  `storm-bundle.zip` и кладёт его в assets модуля `apt-manager` (это место
+  prebuild не перегенерирует).
+- Нативный модуль `apt-manager` (`seedStormBundle`) при установке копирует
+  архив в rootfs: `/root/storm-bundle.zip`.
+- Шаг установки распаковывает его в `/root/storm` и ставит лаунчер
+  `/usr/local/bin/storm`.
 
-`rai install sdk` качает нативный ARM SDK из
-`github.com/HomuHomu833/android-sdk-custom` (а не из репозитория RAI), адреса
-всех источников — в `rai/src/shell/lib/sources.sh`, каждую можно переопределить
-переменной окружения.
+Зеркала, откуда `storm setup` качает инструменты, описаны в
+`storm/storm_engine/env.py` (android.jar, aapt2, r8.jar, bundletool.jar).
 
 ## Фоновый режим
 
 - Во время установки и сборки работает **foreground service**
-  (`BackgroundWorkService`) с уведомлением «Compose Studio — …» и wakelock'ом:
-  можно свернуть приложение или заблокировать экран — процесс не убьют.
+  (`BackgroundWorkService`) с уведомлением и wakelock'ом: можно свернуть
+  приложение или заблокировать экран — процесс не убьют.
 - Каждый шаг идемпотентен и проверяется при старте.
 - Управление: `src/utils/background.ts` (start/update/stop), нативно —
   `AptManagerModule` + `BackgroundWorkService.kt`.
@@ -80,7 +73,7 @@ proot) приложение просит:
 - **Android 10 и ниже**: классический runtime-диалог
   (`READ/WRITE_EXTERNAL_STORAGE`, `READ_MEDIA_*` на 13+).
 
-Кнопка «Разрешить доступ» — на странице установки RAI и в разделе
+Кнопка «Разрешить доступ» — на странице установки среды и в разделе
 «Настройки → Память и фон».
 
 ## Права и служба в манифесте
@@ -97,5 +90,5 @@ proot) приложение просит:
 `App.tsx` при старте проверяет:
 
 1. rootfs установлен? нет → страница установки Ubuntu;
-2. маркер `/root/.rai-setup.done` (или полный `rai status`)? да → сразу список
-   проектов; нет → страница установки RAI (незавершённые шаги пропустятся).
+2. живой зонд среды (JDK + aapt2 + android.jar)? да → сразу список проектов;
+   нет → страница установки среды (незавершённые шаги пропустятся).

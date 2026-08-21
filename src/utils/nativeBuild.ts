@@ -9,27 +9,30 @@ import { shellQuote } from './workspace';
 import { getProjectDir, slugifyProject } from '../config/runtime';
 import * as apt from '../../modules/apt-manager/src/index';
 
-/** Проверка окружения сборки: Storm + JDK + build-tools + платформа. Без сети. */
+/** Проверка окружения сборки: Storm + JDK + aapt2 + платформа. Без сети. */
 export const checkBuildEnv = async () => {
   const r = await execute(
     'SDK="${ANDROID_HOME:-$HOME/android-sdk}"; ' +
     'echo "storm: $(command -v storm >/dev/null 2>&1 && echo ЕСТЬ || echo НЕТ)"; ' +
     'echo "python3: $(python3 --version 2>&1 | head -1 || echo НЕТ)"; ' +
     'echo "javac: $(javac -version 2>&1 | head -1 || echo НЕТ)"; ' +
-    'echo "build-tools: $(ls "$SDK/build-tools" 2>/dev/null | grep -E \'^[0-9]\' | sort -V | tail -1 || echo НЕТ)"; ' +
-    'echo "platform: $(ls "$SDK/platforms" 2>/dev/null | grep -E \'^android-[0-9]+\' | sort -V | tail -1 || echo НЕТ)"; ' +
-    '[ -x "$SDK/build-tools/$(ls "$SDK/build-tools" 2>/dev/null | grep -E \'^[0-9]\' | sort -V | tail -1)/aapt2" ] && echo AAPT2_OK || echo AAPT2_MISSING; ' +
+    'AAPT2="$(command -v aapt2 2>/dev/null || command -v aapt 2>/dev/null || true)"; ' +
+    '[ -z "$AAPT2" ] && [ -x "$HOME/.storm/tools/aapt2" ] && AAPT2="$HOME/.storm/tools/aapt2"; ' +
+    '[ -z "$AAPT2" ] && AAPT2="$(ls "$SDK"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1)"; ' +
+    'echo "aapt2: ${AAPT2:-НЕТ}"; ' +
+    'JAR="$(ls "$HOME"/.storm/tools/android-*.jar 2>/dev/null | tail -1)"; ' +
+    '[ -z "$JAR" ] && JAR="$(ls "$SDK"/platforms/android-*/android.jar 2>/dev/null | sort -V | tail -1)"; ' +
+    'echo "android.jar: ${JAR:-НЕТ}"; ' +
     'command -v zip >/dev/null 2>&1 && echo ZIP_OK || echo ZIP_MISSING',
     '/',
   );
   const out = String(r?.output || '');
   const problems: string[] = [];
-  if (/storm:.*НЕТ/.test(out)) problems.push('Storm Build не установлен — страница «Установка», шаг «Storm Build»');
+  if (/storm:.*НЕТ/.test(out)) problems.push('Storm Build не установлен — страница «Установка среды», шаг «Storm Build»');
   if (/python3:.*НЕТ/.test(out)) problems.push('Нет python3 (нужен для Storm Build) — установка среды');
   if (/javac:.*НЕТ/.test(out)) problems.push('Нет JDK — выполните установку среды (страница «Установка»)');
-  if (/build-tools:.*НЕТ/.test(out)) problems.push('Нет Android SDK build-tools — установка среды');
-  if (/platform:.*НЕТ/.test(out)) problems.push('Нет платформы Android — установка среды');
-  if (/AAPT2_MISSING/.test(out)) problems.push('aapt2 не найден в build-tools');
+  if (/aapt2:.*НЕТ/.test(out)) problems.push('Нет aapt2 — выполните «storm setup» (шаг установки среды)');
+  if (/android\.jar:.*НЕТ/.test(out)) problems.push('Нет android.jar — выполните «storm setup» (шаг установки среды)');
   if (/ZIP_MISSING/.test(out)) problems.push('Нет утилиты zip (apt install zip)');
   return { ok: problems.length === 0, problems, output: out };
 };
