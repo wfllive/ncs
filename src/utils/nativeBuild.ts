@@ -28,11 +28,11 @@ export const checkBuildEnv = async () => {
   );
   const out = String(r?.output || '');
   const problems: string[] = [];
-  if (/storm:.*НЕТ/.test(out)) problems.push('Storm Build не установлен — страница «Установка среды», шаг «Storm Build»');
+  if (/storm:.*НЕТ/.test(out)) problems.push('Storm Build не установлен — страница «Установка среды», шаг «Storm Build (install.sh)»');
   if (/python3:.*НЕТ/.test(out)) problems.push('Нет python3 (нужен для Storm Build) — установка среды');
   if (/javac:.*НЕТ/.test(out)) problems.push('Нет JDK — выполните установку среды (страница «Установка»)');
-  if (/aapt2:.*НЕТ/.test(out)) problems.push('Нет aapt2 — выполните «storm setup» (шаг установки среды)');
-  if (/android\.jar:.*НЕТ/.test(out)) problems.push('Нет android.jar — выполните «storm setup» (шаг установки среды)');
+  if (/aapt2:.*НЕТ/.test(out)) problems.push('Нет aapt2 — повторите шаг «Storm Build» (install.sh докачает его)');
+  if (/android\.jar:.*НЕТ/.test(out)) problems.push('Нет android.jar — повторите шаг «Storm Build» (install.sh докачает его)');
   if (/ZIP_MISSING/.test(out)) problems.push('Нет утилиты zip (apt install zip)');
   return { ok: problems.length === 0, problems, output: out };
 };

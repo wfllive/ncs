@@ -16,9 +16,9 @@
 APK конструктора (React Native / Expo dev-build)
   └── proot-окружение Ubuntu arm64 (устанавливается при первом запуске)
         └── среда: JDK 17 + python3 + Storm Build (без RAI и без Gradle)
-              ├── apt: JDK 17, python3, curl/zip/unzip
-              ├── Storm Build (бандл из APK)    → кастомный сборщик
-              ├── storm setup                   → aapt2, android.jar, R8, bundletool
+              ├── бандл из APK → /root/storm
+              ├── bash install.sh               → apt-пакеты + aapt2, android.jar,
+              │                                     r8, apksigner, bundletool
               └── bash build.sh (в проекте)     → storm build apk/aab на телефоне
 ```
 
@@ -115,12 +115,12 @@ React + Vite + Android WebView проект в облаке (Ubuntu + JDK 17 + A
    скачивает и распаковывает arm64 rootfs. Занимает несколько минут,
    **можно свернуть приложение** — установка идёт в фоне (уведомление).
 3. **Установка среды** — следующая страница выполняет по шагам
-   (ускоренный профиль — без полного `apt upgrade`, без Node.js, без RAI):
-   `apt update` → JDK 17 + python3 + утилиты (одним вызовом) →
-   **Storm Build** (распаковка бандла из APK, без GitHub) →
-   `storm setup --api 34` (скачивает aapt2, android.jar, r8.jar,
-   bundletool.jar) → проверка окружения. Прогресс виден в журнале; при
-   обрыве установка продолжится с того же шага.
+   (без полного `apt upgrade`, без Node.js, без RAI):
+   `apt update` + `unzip` → бандл **Storm Build** из APK → его штатный
+   установщик `bash install.sh` (ставит JDK 17, python3, aapt2/zipalign,
+   скачивает android.jar, r8.jar, apksigner.jar, bundletool.jar) →
+   проверка окружения. Прогресс виден в журнале; при обрыве установка
+   продолжится с того же шага.
 4. На этом же экране можно сразу выдать разрешения:
    - **Память** — «All files access» (нужно для сохранения APK в `/sdcard/Download`);
    - **Уведомления** — статус фоновых установок/сборок.

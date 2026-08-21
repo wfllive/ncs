@@ -9,10 +9,10 @@
 1. Соберите и установите development build самого конструктора
    (`npm install && npx expo run:android`, или `npm run bd` — EAS).
 2. При первом запуске установите Ubuntu arm64 (скачивание идёт в фоне).
-3. Приложение откроет страницу **«Установка среды»** (ускоренный профиль,
-   без RAI): `apt update` → JDK 17 + python3 + утилиты → **Storm Build**
-   (бандл из APK, офлайн) → `storm setup` (aapt2, android.jar, R8) →
-   проверка окружения.
+3. Приложение откроет страницу **«Установка среды»** (без RAI):
+   `apt update` + `unzip` → бандл **Storm Build** из APK → его штатный
+   `install.sh` сам ставит JDK 17, python3, aapt2/zipalign и скачивает
+   android.jar/R8/apksigner/bundletool → проверка окружения.
    Установку можно свернуть — она продолжится в фоне с того же шага.
 4. После успешного `rai status` откроется список проектов.
 5. Создайте проект (имя + Application ID) — файлы **Java + XML** пишутся

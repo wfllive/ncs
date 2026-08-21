@@ -37,59 +37,41 @@ export const ANDROID_HOME = '/root/android-sdk';
 export const RAI_VERSION = '0.0.1';
 
 /**
- * Команда установки сборщика из бандла: распаковка в /root/storm,
- * лаунчер в PATH, быстрая самопроверка (`storm templates`).
+ * Команда установки сборщика из бандла: распаковка в /root/storm и запуск
+ * штатного установщика `install.sh` — он САМ ставит всё, что нужно:
+ *   - через apt: python3, openjdk-17-jdk-headless, aapt/aapt2, zipalign,
+ *     zip/unzip, curl, tar;
+ *   - скачивает с зеркал (контроль целостности, ретраи): aapt2, android.jar,
+ *     r8.jar, apksigner.jar, bundletool.jar → ~/.storm/tools;
+ *   - устанавливает команду `storm` в PATH и запускает `storm doctor`.
  */
 export const STORM_INSTALL_CMD =
   `mkdir -p ${STORM_DIR} && cd ${STORM_DIR} && ` +
   `unzip -oq ${STORM_BUNDLE} && ` +
-  `chmod +x ${STORM_DIR}/storm && ` +
-  `ln -sf ${STORM_DIR}/storm /usr/local/bin/storm && ` +
-  `storm templates`;
-
-/**
- * Поиск инструментов для проверок: aapt2/aapt и android.jar.
- * Источники: ~/.storm/tools (storm setup), PATH, старый SDK от RAI
- * ($ANDROID_HOME — он продолжает работать, если уже установлен).
- */
-const ENV_PROBE =
-  'SDK="${ANDROID_HOME:-$HOME/android-sdk}"; ' +
-  'AAPT2="$(command -v aapt2 2>/dev/null || command -v aapt 2>/dev/null || true)"; ' +
-  '[ -z "$AAPT2" ] && [ -x "$HOME/.storm/tools/aapt2" ] && AAPT2="$HOME/.storm/tools/aapt2"; ' +
-  '[ -z "$AAPT2" ] && AAPT2="$(ls "$SDK"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1)"; ' +
-  'JAR="$(ls "$HOME"/.storm/tools/android-*.jar 2>/dev/null | tail -1)"; ' +
-  '[ -z "$JAR" ] && JAR="$(ls "$SDK"/platforms/android-*/android.jar 2>/dev/null | sort -V | tail -1)"';
+  `chmod +x install.sh storm 2>/dev/null; ` +
+  `bash install.sh`;
 
 export const SETUP_STEPS = [
   {
-    // БЫСТРО: только `apt update` — полный `apt upgrade` убран (минуты работы
-    // и сотни МБ трафика; для сборки он не нужен).
+    // Минимум для распаковки бандла и работы установщика (остальные пакеты —
+    // JDK, aapt2, zipalign и т.д. — поставит сам install.sh).
     id: 'apt',
-    title: { ru: 'apt update (быстро, без upgrade)', en: 'apt update (fast, no upgrade)' },
+    title: { ru: 'apt update + unzip', en: 'apt update + unzip' },
     cmd:
       'export DEBIAN_FRONTEND=noninteractive; ' +
       '(dpkg --configure -a 2>/dev/null || true); ' +
       '(apt -f install -y 2>/dev/null || true); ' +
-      'apt update',
-    check: '[ -n "$(ls /var/lib/apt/lists/ 2>/dev/null | head -1)" ] && echo DONE || echo TODO',
+      'apt update && ' +
+      'apt install -y --no-install-recommends unzip ca-certificates',
+    check: 'command -v unzip >/dev/null 2>&1 && [ -n "$(ls /var/lib/apt/lists/ 2>/dev/null | head -1)" ] && echo DONE || echo TODO',
   },
   {
-    // Всё, что Storm не ставит сам: JDK 17 (javac/keytool/jarsigner),
-    // python3 (движок сборщика), сетевые и архивные утилиты.
-    id: 'tools',
-    title: { ru: 'JDK 17, python3, утилиты', en: 'JDK 17, python3, utilities' },
-    cmd:
-      'export DEBIAN_FRONTEND=noninteractive; ' +
-      '(dpkg --configure -a 2>/dev/null || true); ' +
-      'apt install -y --no-install-recommends openjdk-17-jdk-headless python3 curl wget zip unzip ca-certificates',
-    check: 'command -v javac >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1 && command -v zip >/dev/null 2>&1 && echo DONE || echo TODO',
-  },
-  {
-    // Storm Build — бандл из APK (assets/storm/storm-bundle.zip) копируется
-    // нативным модулем в rootfs и распаковывается локально. GitHub не нужен.
+    // Storm Build: бандл из APK → распаковка → штатный установщик.
+    // install.sh идемпотентен: установленные пакеты и уже скачанные
+    // инструменты (проверка целостности) пропускаются.
     id: 'storm',
-    title: { ru: 'Storm Build (локальный бандл)', en: 'Storm Build (local bundle)' },
-    check: `[ -x ${STORM_DIR}/storm ] && command -v storm >/dev/null 2>&1 && echo DONE || echo TODO`,
+    title: { ru: 'Storm Build (install.sh)', en: 'Storm Build (install.sh)' },
+    check: `[ -x ${STORM_DIR}/storm ] && command -v storm >/dev/null 2>&1 && command -v javac >/dev/null 2>&1 && echo DONE || echo TODO`,
     run: async (emit) => {
       emit('$ seed Storm bundle (assets/storm/storm-bundle.zip → /root/storm-bundle.zip)');
       let seeded: any = { success: false };
@@ -105,23 +87,14 @@ export const SETUP_STEPS = [
         emit(`✓ ${seeded.output} (${Math.round((seeded.bytes || 0) / 1024)} KB)`);
       }
       const res = await streamRun(`${STORM_INSTALL_CMD} 2>&1`, emit, '/', 'storm');
-      const check = await execute('command -v storm >/dev/null 2>&1 && echo STORM_OK || echo STORM_MISSING', '/');
+      const check = await execute(
+        'command -v storm >/dev/null 2>&1 && command -v javac >/dev/null 2>&1 && echo STORM_OK || echo STORM_MISSING', '/');
       if (!/STORM_OK/.test(check.output || '')) {
-        emit('❌ команда storm не найдена после установки');
+        emit('❌ окружение не готово после install.sh (нет storm или javac)');
         return false;
       }
       return res;
     },
-  },
-  {
-    // Инструменты сборки: storm setup сам скачивает aapt2, android.jar,
-    // r8.jar и bundletool.jar в ~/.storm/tools (зеркала, контроль целостности).
-    // Если на устройстве уже есть SDK (например, от старой установки),
-    // ничего не скачивается — инструменты находятся по ANDROID_HOME.
-    id: 'toolchain',
-    title: { ru: 'storm setup — aapt2, android.jar, R8', en: 'storm setup — aapt2, android.jar, R8' },
-    cmd: 'storm setup --api 34',
-    check: `${ENV_PROBE}; [ -n "$AAPT2" ] && [ -n "$JAR" ] && echo DONE || echo TODO`,
   },
   {
     // Финальная проверка: печатает сводку «Java / build-tools / platforms»
@@ -150,6 +123,20 @@ export const SETUP_STEPS = [
     },
   },
 ];
+
+/**
+ * Поиск инструментов для проверок: aapt2 и android.jar.
+ * Источники: ~/.storm/tools (install.sh/storm setup), PATH, старый SDK
+ * ($ANDROID_HOME — он продолжает работать, если уже установлен).
+ */
+const ENV_PROBE =
+  'SDK="${ANDROID_HOME:-$HOME/android-sdk}"; ' +
+  'AAPT2="$(command -v aapt2 2>/dev/null || true)"; ' +
+  '[ -z "$AAPT2" ] && [ -x "$HOME/.storm/tools/aapt2" ] && AAPT2="$HOME/.storm/tools/aapt2"; ' +
+  '[ -z "$AAPT2" ] && AAPT2="$(ls "$SDK"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1)"; ' +
+  '[ -z "$AAPT2" ] && AAPT2="$(command -v aapt 2>/dev/null || true)"; ' +
+  'JAR="$(ls "$HOME"/.storm/tools/android-*.jar 2>/dev/null | tail -1)"; ' +
+  '[ -z "$JAR" ] && JAR="$(ls "$SDK"/platforms/android-*/android.jar 2>/dev/null | sort -V | tail -1)"';
 
 /** Команда сводки окружения (формат строк — как у прежнего `rai status`). */
 export const ENV_STATUS_CMD =
@@ -247,6 +234,10 @@ const runStep = async (step: any, onLine: (line: string) => void, persistStep: (
 };
 
 const workflowCommandForStep = (step: any) => {
+  if (step.id === 'storm') {
+    // Бандл уже засеян в rootfs до запуска воркфлоу (seedStormBeforeWorkflow).
+    return STORM_INSTALL_CMD;
+  }
   if (step.id === 'status') {
     return `${ENV_STATUS_CMD} 2>&1 | tee ${shq(SETUP_STATUS_FILE)}; ` +
       `grep -qE 'Java[[:space:]]*:[[:space:]]*[0-9]' ${shq(SETUP_STATUS_FILE)} && ` +
@@ -356,6 +347,7 @@ export const runRaiSetup = async ({ onStepStart, onStepEnd, onLine }) => {
 
 const ptyStepCommand = (step) => {
   switch (step.id) {
+    case 'storm': return STORM_INSTALL_CMD;
     case 'status': return `${ENV_STATUS_CMD} 2>&1 | tee ${shq(SETUP_STATUS_FILE)}`;
     case 'marker': return `echo ok > ${shq(SETUP_MARKER)}`;
     default: return step.cmd;
@@ -364,7 +356,7 @@ const ptyStepCommand = (step) => {
 
 const ptyStepTimeout = (step) => {
   if (step.id === 'status' || step.id === 'marker') return 5 * 60 * 1000;
-  if (step.id === 'toolchain') return 60 * 60 * 1000; // скачивание инструментов может идти долго
+  if (step.id === 'storm') return 120 * 60 * 1000; // install.sh: apt + скачивание инструментов может идти долго
   return 120 * 60 * 1000;
 };
 

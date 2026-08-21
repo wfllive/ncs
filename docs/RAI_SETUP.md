@@ -14,15 +14,19 @@
 ## Что выполняется (по шагам)
 
 ```
-1. apt update                   ← БЕЗ полного «apt upgrade» (экономия минут)
-2. apt install -y --no-install-recommends openjdk-17-jdk-headless python3
-                                 curl wget zip unzip ca-certificates
-3. Storm Build                  ← бандл из APK → /root/storm-bundle.zip,
-                                   распаковка в /root/storm + лаунчер в PATH
-4. storm setup --api 34         ← сам качает aapt2, android.jar, r8.jar,
-                                   bundletool.jar в ~/.storm/tools
-5. Проверка окружения           ← Java + aapt2 + платформа
-6. touch /root/.storm-setup.done← маркер готовности
+1. apt update + unzip           ← минимум для распаковки бандла (БЕЗ полного
+                                   «apt upgrade» — экономия минут)
+2. бандл из APK → /root/storm → bash install.sh   ← ШТАТНЫЙ установщик
+                                   Storm делает ВСЁ сам:
+                                   • apt: python3, openjdk-17-jdk-headless,
+                                     aapt/aapt2, zipalign, zip/unzip, curl, tar
+                                   • скачивает с зеркал (целостность + ретраи):
+                                     aapt2, android.jar, r8.jar, apksigner.jar,
+                                     bundletool.jar → ~/.storm/tools
+                                   • ставит команду storm в PATH
+                                   • запускает storm doctor
+3. Проверка окружения           ← Java + aapt2 + платформа
+4. touch /root/.storm-setup.done← маркер готовности
 ```
 
 Что убрано и почему:
@@ -30,10 +34,9 @@
 - **`apt upgrade -y`** — самый долгий шаг (сотни пакетов), для сборки не нужен;
 - **Node.js** — проекты на Java + XML, npm/Vite больше не используются;
 - **RAI** (`rai install base/sdk/status`) — его роль (JDK, SDK, инструменты)
-  теперь выполняют один вызов `apt` и `storm setup`;
-- отдельный **Android SDK** — не требуется: aapt2/android.jar/r8/bundletool
-  Storm кладёт в `~/.storm/tools`. Если старый SDK уже стоит
-  (`~/android-sdk`), он используется без повторных скачиваний.
+  полностью выполняет штатный `install.sh` сборщика;
+- отдельный **Android SDK** — не требуется: инструменты Storm берёт из
+  `~/.storm/tools` (или из старого `~/android-sdk`, если он уже стоит).
 
 После успешной проверки приложение переходит на главный экран со списком
 проектов. Если установку прервали (приложение закрыли) — при следующем запуске
@@ -48,11 +51,12 @@
   prebuild не перегенерирует).
 - Нативный модуль `apt-manager` (`seedStormBundle`) при установке копирует
   архив в rootfs: `/root/storm-bundle.zip`.
-- Шаг установки распаковывает его в `/root/storm` и ставит лаунчер
-  `/usr/local/bin/storm`.
+- Шаг установки распаковывает его в `/root/storm` и запускает штатный
+  `bash install.sh` — он ставит пакеты, качает инструменты и сам создаёт
+  лаунчер `storm` в PATH.
 
-Зеркала, откуда `storm setup` качает инструменты, описаны в
-`storm/storm_engine/env.py` (android.jar, aapt2, r8.jar, bundletool.jar).
+Зеркала инструментов описаны в `storm/install.sh` (android.jar, aapt2,
+r8.jar, apksigner.jar, bundletool.jar) и в `storm/storm_engine/env.py`.
 
 ## Фоновый режим
 
