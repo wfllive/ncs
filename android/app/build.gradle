@@ -89,6 +89,11 @@ android {
 
     namespace 'ru.wfllive.nova'
 
+    buildFeatures {
+        buildConfig true
+    }
+
+    // NCS-KEYSTORE-START (do not edit by hand)
     // Load release signing configuration from keystore.properties if present
     def findKeystoreFile = { String name ->
         if (!name) return new File(projectRoot, "ncs.keystore")
@@ -107,6 +112,7 @@ android {
         keystoreProps.load(new FileInputStream(keystorePropsFile))
     }
     def expectedSha256 = keystoreProps.getProperty('expectedSha256', System.getenv("EXPECTED_SIGNATURE_SHA256") ?: "")
+    // NCS-KEYSTORE-END
 
     defaultConfig {
         applicationId 'ru.wfllive.nova'
@@ -114,11 +120,12 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0.0"
-        buildConfigField "String", "EXPECTED_SIGNATURE_SHA256", "\"${expectedSha256}\""
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
+        buildConfigField "String", "EXPECTED_SIGNATURE_SHA256", "\"${expectedSha256}\""
     }
     signingConfigs {
+        // NCS-RELEASE-SIGNING-START
         release {
             if (keystorePropsFile.exists()) {
                 def sfPath = keystoreProps['storeFile'] ?: "ncs"
@@ -147,6 +154,7 @@ android {
                 enableV3Signing true
             }
         }
+        // NCS-RELEASE-SIGNING-END
 
         debug {
             storeFile file('debug.keystore')
@@ -160,13 +168,15 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
+            // NCS-RELEASE-CHECK-START
             def hasReleaseKey = keystorePropsFile.exists() || System.getenv("KEYSTORE_FILE") != null || findProperty("MYAPP_RELEASE_STORE_FILE") != null
             if (!hasReleaseKey) {
-                throw new GradleException("ОШИБКА ПОДПИСИ РЕЛИЗА: Не найден файл keystore.properties или ключ подписи! Перед сборкой релиза запустите 'npm run generate-key' в корне проекта.")
+                throw new GradleException("ОШИБКА ПОДПИСИ РЕЛИЗА: Не найден файл keystore.properties или ключ подписи! Перед сборкой релиза запустите 'npm run key' в корне проекта.")
             }
             signingConfig signingConfigs.release
+            // NCS-RELEASE-CHECK-END
+            // Caution! In production, you need to generate your own keystore file.
+            // see https://reactnative.dev/docs/signed-apk-android.
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds
