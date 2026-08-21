@@ -28,6 +28,14 @@ export const getRootfsProgress = async () =>
   native?.getRootfsProgress?.() || { stage: 'idle', url: '', downloadedBytes: 0, totalBytes: 0, message: '' };
 export const seedRaiBundle = async () =>
   native?.seedRaiBundle?.() || { success: false, output: 'Not available' };
+/**
+ * Alias для seedRaiBundle: после переписывания нативного seedRaiBundle он
+ * уже копирует и RAI-бандл (rai.sh), и NCS-скрипты (rai/ncs/*.sh) за один
+ * вызов. Отдельный метод оставлен как безопасный алиас, чтобы старые
+ * вызовы с JS-стороны не падали с "undefined is not a function".
+ */
+export const seedNcsScripts = async () =>
+  native?.seedNcsScripts?.() || seedRaiBundle();
 export const canInstallApks = async () => native?.canInstallApks?.() || false;
 export const installApk = async (path: string) => native?.installApk?.(path) || { success: false, output: 'Native APK installer is unavailable' };
 export const launchPackage = async (packageName: string) => native?.launchPackage?.(packageName) || { success: false, output: 'Native package launcher is unavailable' };
@@ -140,7 +148,7 @@ export default {
   install, remove, search, info, update,
   listInstalled, whichCommand, getPrefix, getHome,
   isProotRootfsInstalled, getProotRootfsDir, installProotRootfs, getRootfsProgress, deleteRootfs,
-  seedRaiBundle,
+  seedRaiBundle, seedNcsScripts,
   canInstallApks, installApk, launchPackage, renderComposePreview,
   hasAllFilesAccess, openAllFilesAccessSettings, requestStoragePermissions,
   initializeNotifications, getNotificationsPermissionStatus, hasNotificationsPermission,

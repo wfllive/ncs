@@ -701,57 +701,103 @@ class AptManagerModule : Module() {
     }
 
     // ---------------------------------------------------------------------
-    // RAI — vendored в этом репозитории (rai/). Бандл лежит в assets модуля
-    // apt-manager (modules/apt-manager/android/src/main/assets/rai/rai.sh) —
+    // RAI + NCS Build — вендоренные в этом репозитории скрипты лежат в assets
+    // модуля apt-manager (modules/apt-manager/android/src/main/assets/rai/):
+    //   rai/rai.sh               — основной RAI-бандл (Node.js CLI)
+    //   rai/ncs/fast-install.sh  — быстрая установка JDK 17 + Android SDK
+    //   rai/ncs/ncs-build.sh     — сборка Java+XML без Gradle
+    //   rai/ncs/new-project.sh   — создание нового проекта
     // prebuild пересоздаёт только android/, поэтому эта копия переживает
     // `expo prebuild --clean`. При gradle-сборке assets библиотечного модуля
-    // сливаются в APK, и здесь мы копируем их в rootfs как /root/rai/rai.sh,
-    // чтобы страница установки запускала ЛОКАЛЬНУЮ копию (bash /root/rai/rai.sh)
-    // без скачивания с GitHub.
+    // сливаются в APK, и здесь мы копируем их в rootfs как /root/rai/... чтобы
+    // страница установки запускала ЛОКАЛЬНЫЕ копии без скачивания с GitHub.
     // ---------------------------------------------------------------------
 
     private fun getRaiRootfsDir(): File = File(getProotRootfsDir(), "root/rai")
 
+    /** Copy one APK asset into the rootfs. Sets +rx and 0644 perms. */
+    private fun copyAssetToRootfs(assetPath: String, dest: File, log: MutableList<String>? = null): Boolean {
+        return try {
+            val appCtx = appContext.reactContext!!
+            appCtx.assets.open(assetPath).use { input ->
+                val tmp = File(dest.parentFile, dest.name + ".tmp")
+                dest.parentFile?.mkdirs()
+                FileOutputStream(tmp).use { out -> input.copyTo(out) }
+                tmp.setExecutable(true, false)
+                tmp.setReadable(true, false)
+                if (!tmp.renameTo(dest)) {
+                    tmp.copyTo(dest, overwrite = true)
+                    tmp.delete()
+                }
+            }
+            log?.add("seeded $assetPath -> ${dest.absolutePath} (${dest.length()} B)")
+            true
+        } catch (e: Exception) {
+            log?.add("seed failed for $assetPath: ${e.message}")
+            false
+        }
+    }
+
     private fun seedRaiBundle(): Map<String, Any> {
+        val log = mutableListOf<String>()
         return try {
             val appCtx = appContext.reactContext!!
             val destDir = getRaiRootfsDir()
             destDir.mkdirs()
-            val dest = File(destDir, "rai.sh")
-            if (dest.isFile && dest.length() > 100_000L) {
-                return mapOf(
-                    "success" to true,
-                    "output" to "RAI bundle already seeded",
-                    "path" to "/root/rai/rai.sh",
-                    "bytes" to dest.length(),
-                )
-            }
-            val input = appCtx.assets.open("rai/rai.sh")
-            val tmp = File(destDir, "rai.sh.tmp")
-            FileOutputStream(tmp).use { out -> input.copyTo(out) }
-            input.close()
-            tmp.setExecutable(true, false)
-            tmp.setReadable(true, false)
-            if (tmp.renameTo(dest)) {
-                mapOf(
-                    "success" to true,
-                    "output" to "RAI bundle seeded from APK assets",
-                    "path" to "/root/rai/rai.sh",
-                    "bytes" to dest.length(),
-                )
+            var bytes = 0L
+            var count = 0
+
+            // 1) rai.sh (основной RAI бандл)
+            val raiDest = File(destDir, "rai.sh")
+            if (raiDest.isFile && raiDest.length() > 100_000L) {
+                log.add("rai.sh already seeded (${raiDest.length()} B)")
+                bytes += raiDest.length()
+                count++
             } else {
-                // renameTo can fail on some filesystems — fall back to copy+delete
-                tmp.copyTo(dest, overwrite = true)
-                tmp.delete()
-                mapOf(
-                    "success" to true,
-                    "output" to "RAI bundle seeded from APK assets (copy)",
-                    "path" to "/root/rai/rai.sh",
-                    "bytes" to dest.length(),
-                )
+                if (copyAssetToRootfs("rai/rai.sh", raiDest, log)) {
+                    bytes += raiDest.length()
+                    count++
+                }
             }
+
+            // 2) NCS Build scripts (fast-install, build, new-project) — раньше лежали
+            //    только в assets, а нативный модуль их не копировал, что приводило к
+            //    "TypeError: undefined is not a function" на шаге "Копирую NCS-скрипты".
+            val ncsSrcDir = "rai/ncs"
+            val ncsDestDir = File(destDir, "ncs")
+            ncsDestDir.mkdirs()
+            val ncsFiles = listOf("fast-install.sh", "ncs-build.sh", "new-project.sh")
+            for (f in ncsFiles) {
+                val dest = File(ncsDestDir, f)
+                val assetPath = "$ncsSrcDir/$f"
+                if (dest.isFile && dest.length() > 100L) {
+                    log.add("$f already seeded (${dest.length()} B)")
+                    bytes += dest.length()
+                    count++
+                    continue
+                }
+                if (copyAssetToRootfs(assetPath, dest, log)) {
+                    bytes += dest.length()
+                    count++
+                } else {
+                    // Не падаем — скрипт мог не быть включен в ассеты (старый APK).
+                    // В этом случае установка JDK/SDK будет использовать запасной
+                    // путь в коде (скачивание/встроенные команды).
+                    log.add("$f missing from APK assets — skipping")
+                }
+            }
+
+            mapOf(
+                "success" to true,
+                "output" to "RAI + NCS bundle seeded from APK assets ($count files)",
+                "path" to "/root/rai/rai.sh",
+                "ncsDir" to "/root/rai/ncs",
+                "files" to count,
+                "bytes" to bytes,
+                "log" to log.joinToString("\n"),
+            )
         } catch (e: Exception) {
-            mapOf("success" to false, "output" to (e.message ?: e.toString()))
+            mapOf("success" to false, "output" to (e.message ?: e.toString()), "log" to log.joinToString("\n"))
         }
     }
 
