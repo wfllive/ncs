@@ -71,6 +71,12 @@ elif command -v apt-get &>/dev/null; then
         [ -n "$P312" ] && ln -sf "$P312" /usr/bin/python3 && echo "  -> python3: ссылка восстановлена"
     fi
     (dpkg --configure -a 2>/dev/null || true)
+    # postinst ca-certificates тоже мог не дойти — без бандла CA curl и
+    # python3 не смогут в TLS. Собираем сертификаты вручную.
+    if command -v update-ca-certificates &>/dev/null; then
+        update-ca-certificates 2>/dev/null || true
+        echo "  -> CA-бандл пересобран (update-ca-certificates)"
+    fi
 elif command -v brew &>/dev/null; then
     echo "  -> Detected macOS with Homebrew."
     brew install openjdk android-commandlinetools || true
@@ -142,6 +148,19 @@ fetch_url() {
     fi
     if command -v python3 &>/dev/null; then
         if python3 -c "import sys,urllib.request as u; u.urlretrieve(sys.argv[1], sys.argv[2])" "$url" "$dest" 2>/dev/null; then
+            return 0
+        fi
+        # В proot ca-certificates часто не настроен — TLS-проверка валится.
+        # Крайний случай: качаем без верификации (URL доверенные).
+        if python3 -c "import sys,ssl,urllib.request as u; u.install_opener(u.build_opener(u.HTTPSHandler(context=ssl._create_unverified_context()))); u.urlretrieve(sys.argv[1], sys.argv[2])" "$url" "$dest" 2>/dev/null; then
+            echo "    [WARN] TLS без проверки сертификата (CA не настроены в proot)"
+            return 0
+        fi
+    fi
+    # Последний шанс: curl без проверки (если CA сломаны).
+    if command -v curl &>/dev/null; then
+        if curl -fkSL --connect-timeout 10 --max-time 120 --retry 2 -o "$dest" "$url" 2>/dev/null; then
+            echo "    [WARN] curl -k (CA не настроены в proot)"
             return 0
         fi
     fi

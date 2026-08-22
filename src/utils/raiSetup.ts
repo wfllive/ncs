@@ -59,6 +59,10 @@ export const STORM_INSTALL_CMD =
   `f_fetch() { command -v curl >/dev/null 2>&1 && curl -fsSL --retry 2 --max-time 300 -o "$2" "$1" && return 0; ` +
   `command -v wget >/dev/null 2>&1 && wget -q -T 300 -O "$2" "$1" && return 0; ` +
   `[ -n "$PY" ] && "$PY" -c "import sys,urllib.request as u;u.urlretrieve(sys.argv[1],sys.argv[2])" "$1" "$2" && return 0; ` +
+  // Если в rootfs нет CA-сертификатов (битый ca-certificates), TLS-проверка
+  // валится — качаем без верификации (крайний случай; URL доверенные).
+  `[ -n "$PY" ] && "$PY" -c "import sys,ssl,urllib.request as u;u.install_opener(u.build_opener(u.HTTPSHandler(context=ssl._create_unverified_context())));u.urlretrieve(sys.argv[1],sys.argv[2])" "$1" "$2" && { echo "WARN: TLS без проверки сертификата (CA не настроены)"; return 0; }; ` +
+  `command -v curl >/dev/null 2>&1 && curl -fkSL --retry 2 --max-time 300 -o "$2" "$1" && return 0; ` +
   `return 1; }; ` +
   `f_unzip() { [ -s "$1" ] || return 1; ` +
   `command -v unzip >/dev/null 2>&1 && unzip -oq "$1" -d "$2" 2>/dev/null && return 0; ` +
@@ -106,6 +110,9 @@ export const SETUP_STEPS = [
       'apt upgrade -y || true; ' +
       'apt install -y unzip ca-certificates curl wget python3 || true; ' +
       '(dpkg --configure -a 2>/dev/null || true); ' +
+      // postinst ca-certificates мог не дойти (битый debconf) — собираем
+      // бандл CA вручную, иначе curl/python3 не смогут в TLS.
+      '(command -v update-ca-certificates >/dev/null 2>&1 && update-ca-certificates 2>/dev/null) || true; ' +
       '{ [ -x /usr/bin/python3 ] || { P312="$(ls /usr/bin/python3.* 2>/dev/null | head -1)"; [ -n "$P312" ] && ln -sf "$P312" /usr/bin/python3 && echo "python3: ссылка восстановлена"; }; } || true; ' +
       'command -v unzip >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 && echo APT_STEP_OK',
     check: 'command -v unzip >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 && [ -n "$(ls /var/lib/apt/lists/ 2>/dev/null | head -1)" ] && echo DONE || echo TODO',
