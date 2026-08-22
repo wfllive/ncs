@@ -60,9 +60,8 @@ export const SETUP_STEPS = [
     cmd:
       'export DEBIAN_FRONTEND=noninteractive; ' +
       '(dpkg --configure -a 2>/dev/null || true); ' +
-      '(apt -f install -y 2>/dev/null || true); ' +
-      'apt update && ' +
-      'apt install -y --no-install-recommends unzip ca-certificates',
+      'apt update && apt upgrade -y && ' +
+      'apt install unzip ca-certificates -y',
     check: 'command -v unzip >/dev/null 2>&1 && [ -n "$(ls /var/lib/apt/lists/ 2>/dev/null | head -1)" ] && echo DONE || echo TODO',
   },
   {
