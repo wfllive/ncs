@@ -322,7 +322,7 @@ const workflowCommandForStep = (step: any) => {
     return STORM_INSTALL_CMD;
   }
   if (step.id === 'status') {
-    return `${ENV_STATUS_CMD} 2>&1 | tee ${shq(SETUP_STATUS_FILE)}; ` +
+    return `{ ${ENV_STATUS_CMD}; } 2>&1 | tee ${shq(SETUP_STATUS_FILE)}; ` +
       `grep -qE 'Java[[:space:]]*:[[:space:]]*[0-9]' ${shq(SETUP_STATUS_FILE)} && ` +
       `grep -qE 'build-tools[[:space:]]*:[[:space:]]*/' ${shq(SETUP_STATUS_FILE)} && ` +
       `grep -qE 'platforms[[:space:]]*:[[:space:]]*android' ${shq(SETUP_STATUS_FILE)}`;
@@ -425,7 +425,9 @@ export const runRaiSetup = async ({ onStepStart, onStepEnd, onLine }) => {
 const ptyStepCommand = (step) => {
   switch (step.id) {
     case 'storm': return STORM_INSTALL_CMD;
-    case 'status': return `${ENV_STATUS_CMD} 2>&1 | tee ${shq(SETUP_STATUS_FILE)}`;
+    // ВАЖНО: фигурные скобки — иначе «| tee» прицепится только к последнему
+    // echo и в файл попадёт лишь строка platforms (баг прежних версий).
+    case 'status': return `{ ${ENV_STATUS_CMD}; } 2>&1 | tee ${shq(SETUP_STATUS_FILE)}`;
     case 'marker': return `echo ok > ${shq(SETUP_MARKER)}`;
     default: return step.cmd;
   }
