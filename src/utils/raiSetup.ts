@@ -37,11 +37,28 @@ export const ANDROID_HOME = '/root/android-sdk';
 export const RAI_VERSION = '0.0.1';
 
 // Коммит в wfllive/ncs, в котором лежит копия бандла (зеркало для fallback).
+// Используем ветку сессии: бандл в ней всегда содержит актуальный install.sh
+// (raw.githubusercontent поддерживает refs веток).
 const STORM_BUNDLE_RAW =
-  'https://raw.githubusercontent.com/wfllive/ncs/a7956a4/modules/apt-manager/android/src/main/assets/storm/storm-bundle.zip';
+  'https://raw.githubusercontent.com/wfllive/ncs/arena/01a0263b-ncs/modules/apt-manager/android/src/main/assets/storm/storm-bundle.zip';
 // Апстрим-репозиторий сборщика (исходники вместо бандла — третий эшелон).
 const STORM_SRC_ZIP =
   'https://codeload.github.com/wfllive/Storm-Build/zip/refs/heads/arena/019ffc57-storm-build';
+
+// Зеркала тулчейнов для «спасательной» докачки (если install.sh не смог сам —
+// например, его копия из старого бандла без TLS-фолбэков).
+const ANDROID_JAR_MIRRORS = [
+  'https://github.com/Sable/android-platforms/raw/master/android-34/android.jar',
+  'https://raw.githubusercontent.com/skylot/jadx/master/jadx-core/src/test/resources/samples/android-34.jar',
+  'https://github.com/anggrayudi/android-platforms/raw/master/android-34/android.jar',
+];
+const R8_MIRRORS = [
+  'https://storage.googleapis.com/r8-releases/raw/main/r8.jar',
+  'https://repo1.maven.org/maven2/com/android/tools/r8/8.2.33/r8-8.2.33.jar',
+];
+const BUNDLETOOL_MIRRORS = [
+  'https://github.com/google/bundletool/releases/download/1.17.0/bundletool-all-1.17.0.jar',
+];
 
 /**
  * Команда установки сборщика. Устойчива к «падающим» в proot бинарям:
@@ -91,6 +108,15 @@ export const STORM_INSTALL_CMD =
   `[ -f install.sh ] || { echo "STORM_FAIL: install.sh не найден — бандла нет в APK и зеркала недоступны"; ` +
   `echo "[storm] диагностика: bundle=$(stat -c %s ${STORM_BUNDLE} 2>/dev/null || echo отсутствует) unzip=$(command -v unzip || echo нет) py=$PY"; exit 1; }; ` +
   `chmod +x install.sh storm 2>/dev/null; ` +
+  // «Спасательная» докачка тулчейнов ДО install.sh: если бандл принёс старый
+  // install.sh без TLS-фолбэков, он не сможет скачать их сам. Кладём в
+  // ~/.storm/tools — install.sh увидит валидные файлы и пропустит скачивание.
+  `ST="$HOME/.storm/tools"; mkdir -p "$ST"; ` +
+  `{ [ -s "$ST/android-34.jar" ] || { echo "[storm] докачиваю android.jar (API 34)…"; ` +
+  `f_fetch ${ANDROID_JAR_MIRRORS[0]} "$ST/android-34.jar" || f_fetch ${ANDROID_JAR_MIRRORS[1]} "$ST/android-34.jar" || f_fetch ${ANDROID_JAR_MIRRORS[2]} "$ST/android-34.jar" || echo "[storm] WARN: android.jar не докачался"; }; }; ` +
+  `{ [ -s "$ST/r8.jar" ] || { echo "[storm] докачиваю r8.jar…"; ` +
+  `f_fetch ${R8_MIRRORS[0]} "$ST/r8.jar" || f_fetch ${R8_MIRRORS[1]} "$ST/r8.jar" || echo "[storm] WARN: r8.jar не докачался"; }; }; ` +
+  `{ [ -s "$ST/bundletool.jar" ] || { f_fetch ${BUNDLETOOL_MIRRORS[0]} "$ST/bundletool.jar" || echo "[storm] WARN: bundletool.jar не докачался (нужен только для AAB)"; }; }; ` +
   `bash install.sh`;
 
 export const SETUP_STEPS = [
