@@ -14,7 +14,7 @@ import { syncJavaProject, ensureJavaProjectIntegrity, refreshJavaScaffold } from
 import { checkBuildEnv } from '../utils/nativeBuild';
 import * as apt from '../../modules/apt-manager/src/index';
 import { startBackground, stopBackground } from '../utils/background';
-import { TerminalView, isAvailable as terminalAvailable } from '../../modules/termux-terminal/src/index';
+import { TerminalView, isAvailable as terminalAvailable, copyToClipboard } from '../../modules/termux-terminal/src/index';
 import AdsBanner from '../components/AdsBanner';
 import { maybeShowInterstitial } from '../ads/yandexAds';
 
@@ -288,6 +288,20 @@ const BuildScreen = ({ navigation }) => {
     } catch (_) {}
   };
 
+  // «Скопировать» — транскрипт терминала (или JS-журнал) в буфер обмена:
+  // удобно вставить вывод в чат/багрепорт.
+  const [copied, setCopied] = useState(false);
+  const copyJournal = async () => {
+    try {
+      let text = '';
+      try { text = (await terminalRef.current?.getTranscriptText?.()) || ''; } catch (_) {}
+      if (!text || !text.trim()) text = logs.map(l => l.text).join('\n');
+      await copyToClipboard(text || 'Build log is empty');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_) {}
+  };
+
   const cur = tasks[task];
 
   if (!currentProject) {
@@ -333,6 +347,7 @@ const BuildScreen = ({ navigation }) => {
             {narrow ? null : <IconButton name="add-outline" onPress={() => setFontSize(v => Math.min(34, v + 2))} />}
             {!narrow && resultState !== 'idle' ? <StatusPill label={resultState === 'success' ? copy.success : resultState === 'error' ? 'Error' : '…'} tone={resultState === 'success' ? 'success' : resultState === 'error' ? 'error' : 'info'} /> : null}
             <Pressable onPress={shareJournal} style={[styles.clear, { flexDirection: 'row', gap: 4, backgroundColor: '#253046', paddingHorizontal: 8, borderRadius: 6 }]}><Icon name="share-outline" size={13} color="#4ADE80" />{narrow ? null : <Text style={{ color: '#4ADE80', fontSize: 10, fontWeight: '700' }}>{ru ? 'Журнал' : 'Log'}</Text>}</Pressable>
+            <Pressable onPress={copyJournal} style={[styles.clear, { flexDirection: 'row', gap: 4, backgroundColor: '#253046', paddingHorizontal: 8, borderRadius: 6 }]}><Icon name={copied ? 'checkmark-outline' : 'copy-outline'} size={13} color="#7FB8E8" />{narrow ? null : <Text style={{ color: '#7FB8E8', fontSize: 10, fontWeight: '700' }}>{copied ? (ru ? 'Готово' : 'Done') : (ru ? 'Копия' : 'Copy')}</Text>}</Pressable>
             <Pressable onPress={clearConsole} style={styles.clear}><Icon name="trash-outline" size={14} color="#8B98AD" /></Pressable>
           </View>
           {terminalAvailable() ? (

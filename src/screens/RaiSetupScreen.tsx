@@ -5,7 +5,7 @@ import { Icon } from '../components/Icon';
 import { AppScreen, IconButton, PrimaryButton, SectionCard, StatusPill } from '../components/AppUI';
 import { useAppSettings } from '../store/appSettings';
 import { SETUP_STEPS, runRaiSetup, runRaiSetupPty, SETUP_STEP_FILE } from '../utils/raiSetup';
-import { TerminalView, isAvailable as terminalAvailable } from '../../modules/termux-terminal/src/index';
+import { TerminalView, isAvailable as terminalAvailable, copyToClipboard } from '../../modules/termux-terminal/src/index';
 import {
   startBackground, stopBackground, updateBackground,
   hasStorageAccess, openStorageSettings, requestStoragePermissions,
@@ -252,6 +252,26 @@ const RaiSetupScreen = ({ onComplete, resume = false, resumeStep = null }) => {
     }
   };
 
+  // Кнопка «Скопировать лог»: транскрипт терминала → системный буфер обмена,
+  // чтобы можно было вставить вывод в чат/багрепорт. Если терминал недоступен —
+  // копируем сводку шагов из JS-состояния.
+  const [copied, setCopied] = useState(false);
+  const copyLog = useCallback(async () => {
+    try {
+      let text = '';
+      try { text = (await terminalRef.current?.getTranscriptText?.()) || ''; } catch (_) {}
+      if (!text || !text.trim()) {
+        text = SETUP_STEPS
+          .map((s) => `${s.id}: ${stepStates[s.id] || 'pending'}`)
+          .join('\n');
+        if (error) text += `\nerror: ${error}`;
+      }
+      await copyToClipboard(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_) {}
+  }, [stepStates, error]);
+
   const stepIcon = (state) => {
     switch (state) {
       case 'done': return <Icon name="checkmark-circle" size={17} color={colors.success} />;
@@ -341,6 +361,7 @@ const RaiSetupScreen = ({ onComplete, resume = false, resumeStep = null }) => {
               <View style={{ flex: 1 }} />
               <IconButton name="remove-outline" onPress={() => setFontSize((v) => Math.max(10, v - 2))} />
               <IconButton name="add-outline" onPress={() => setFontSize((v) => Math.min(34, v + 2))} />
+              <IconButton name={copied ? 'checkmark-outline' : 'copy-outline'} onPress={copyLog} />
               {phase === 'running' ? <StatusPill label={`${elapsed}s`} tone="info" /> : null}
             </View>
             <View style={styles.terminalWrap}>
