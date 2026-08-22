@@ -36,18 +36,39 @@ export const RAI_BUNDLE = `${RAI_BUNDLE_DIR}/rai.sh`;
 export const ANDROID_HOME = '/root/android-sdk';
 export const RAI_VERSION = '0.0.1';
 
+// Коммит в wfllive/ncs, в котором лежит копия бандла (зеркало для fallback).
+const STORM_BUNDLE_RAW =
+  'https://raw.githubusercontent.com/wfllive/ncs/a7956a4/modules/apt-manager/android/src/main/assets/storm/storm-bundle.zip';
+// Апстрим-репозиторий сборщика (исходники вместо бандла — третий эшелон).
+const STORM_SRC_ZIP =
+  'https://codeload.github.com/wfllive/Storm-Build/zip/refs/heads/arena/019ffc57-storm-build';
+
 /**
- * Команда установки сборщика из бандла: распаковка в /root/storm и запуск
- * штатного установщика `install.sh` — он САМ ставит всё, что нужно:
- *   - через apt: python3, openjdk-17-jdk-headless, aapt/aapt2, zipalign,
- *     zip/unzip, curl, tar;
- *   - скачивает с зеркал (контроль целостности, ретраи): aapt2, android.jar,
- *     r8.jar, apksigner.jar, bundletool.jar → ~/.storm/tools;
- *   - устанавливает команду `storm` в PATH и запускает `storm doctor`.
+ * Команда установки сборщика. Источники по приоритету:
+ *   1) бандл из APK, засеянный в /root/storm-bundle.zip (офлайн);
+ *   2) тот же бандл из репозитория конструктора (если seed не сработал);
+ *   3) исходники Storm Build из апстрим-репозитория (codeload).
+ * Дальше — штатный `install.sh`: apt-пакеты (JDK 17, python3, aapt/aapt2,
+ * zipalign…), скачивание android.jar/r8/apksigner/bundletool в ~/.storm/tools,
+ * лаунчер storm в PATH, `storm doctor`.
  */
 export const STORM_INSTALL_CMD =
   `mkdir -p ${STORM_DIR} && cd ${STORM_DIR} && ` +
-  `unzip -oq ${STORM_BUNDLE} && ` +
+  // 1) офлайн-бандл из APK
+  `{ [ -f install.sh ] || { [ -s ${STORM_BUNDLE} ] && unzip -oq ${STORM_BUNDLE}; }; }; ` +
+  // 2) бандл из репозитория конструктора
+  `{ [ -f install.sh ] || { command -v curl >/dev/null 2>&1 && ` +
+  `curl -fsSL --retry 3 --max-time 300 -o ${STORM_BUNDLE} ${STORM_BUNDLE_RAW} && ` +
+  `unzip -oq ${STORM_BUNDLE}; }; }; ` +
+  // 3) исходники апстрима (Storm-Build)
+  `{ [ -f install.sh ] || { command -v curl >/dev/null 2>&1 && ` +
+  `curl -fsSL --retry 3 --max-time 300 -o /tmp/storm-src.zip ${STORM_SRC_ZIP} && ` +
+  `rm -rf /tmp/storm-src && unzip -q /tmp/storm-src.zip -d /tmp/storm-src && ` +
+  `rm -rf ${STORM_DIR} && mkdir -p ${STORM_DIR} && ` +
+  `mv /tmp/storm-src/*/* ${STORM_DIR}/ 2>/dev/null; ` +
+  `mv /tmp/storm-src/*/.gitignore ${STORM_DIR}/ 2>/dev/null; ` +
+  `rm -rf /tmp/storm-src /tmp/storm-src.zip; }; }; ` +
+  `[ -f install.sh ] || { echo "STORM_FAIL: install.sh не найден — бандла нет в APK и зеркала недоступны"; exit 1; }; ` +
   `chmod +x install.sh storm 2>/dev/null; ` +
   `bash install.sh`;
 
@@ -61,8 +82,8 @@ export const SETUP_STEPS = [
       'export DEBIAN_FRONTEND=noninteractive; ' +
       '(dpkg --configure -a 2>/dev/null || true); ' +
       'apt update && apt upgrade -y && ' +
-      'apt install unzip ca-certificates -y',
-    check: 'command -v unzip >/dev/null 2>&1 && [ -n "$(ls /var/lib/apt/lists/ 2>/dev/null | head -1)" ] && echo DONE || echo TODO',
+      'apt install unzip ca-certificates curl -y',
+    check: 'command -v unzip >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && [ -n "$(ls /var/lib/apt/lists/ 2>/dev/null | head -1)" ] && echo DONE || echo TODO',
   },
   {
     // Storm Build: бандл из APK → распаковка → штатный установщик.
@@ -75,15 +96,12 @@ export const SETUP_STEPS = [
       emit('$ seed Storm bundle (assets/storm/storm-bundle.zip → /root/storm-bundle.zip)');
       let seeded: any = { success: false };
       try { seeded = await apt.seedStormBundle(); } catch (e) { seeded = { success: false, output: String(e) }; }
-      if (!seeded?.success) {
-        const probe = await execute(`[ -s ${STORM_BUNDLE} ] && echo YES || echo NO`, '/');
-        if (!/YES/.test(probe.output || '')) {
-          emit(`❌ ${seeded?.output || 'seedStormBundle failed'}`);
-          return false;
-        }
-        emit('⚠ бандл уже есть в rootfs — продолжаем');
-      } else {
+      if (seeded?.success) {
         emit(`✓ ${seeded.output} (${Math.round((seeded.bytes || 0) / 1024)} KB)`);
+      } else {
+        // Не фатально: STORM_INSTALL_CMD сам попробует зеркала (репозиторий
+        // конструктора → апстрим Storm-Build).
+        emit(`⚠ бандла из APK нет (${seeded?.output || 'seed недоступен'}) — используем зеркала`);
       }
       const res = await streamRun(`${STORM_INSTALL_CMD} 2>&1`, emit, '/', 'storm');
       const check = await execute(
@@ -286,17 +304,11 @@ export const buildSetupWorkflowCommand = () => {
 /** Совместимость со старым именем. */
 export const buildRaiSetupWorkflowCommand = buildSetupWorkflowCommand;
 
-/** Seed бандла сборщика до запуска устойчивого шелл-воркфлоу. */
+/** Seed бандла сборщика до запуска устойчивого шелл-воркфлоу.
+ * Необязателен: если бандла нет, install.sh подтянется с зеркал. */
 const seedStormBeforeWorkflow = async () => {
-  let seeded: any = { success: false };
-  try { seeded = await apt.seedStormBundle(); } catch (e) { seeded = { success: false, output: String(e) }; }
-  if (!seeded?.success) {
-    const probe = await execute(`[ -s ${shq(STORM_BUNDLE)} ] && echo YES || echo NO`, '/');
-    if (!/YES/.test(probe.output || '')) {
-      return { ok: false, summary: [{ id: 'storm', status: 'failed', output: seeded?.output || 'seedStormBundle failed' }] };
-    }
-  }
-  return { ok: true };
+  try { await apt.seedStormBundle(); } catch (e) { /* зеркала подстрахуют */ }
+  return { ok: true as const };
 };
 
 export const runRaiSetup = async ({ onStepStart, onStepEnd, onLine }) => {
@@ -395,14 +407,10 @@ export const runRaiSetupPty = async ({ terminal, onStepStart, onStepEnd, onStatu
       } catch (_) {}
     }
 
-    // 1) JS-прелюдия: шаг 'storm' требует seed бандла из APK в rootfs
+    // 1) JS-прелюдия: пробуем seed бандла из APK в rootfs (необязательно —
+    // при недоступности install.sh подтянется с зеркал).
     if (step.id === 'storm') {
-      const seeded = await seedStormBeforeWorkflow();
-      if (!seeded.ok) {
-        try { onStepEnd && onStepEnd(step.id, step, { status: 'failed', output: seeded.summary?.[0]?.output }); } catch (_) {}
-        summary.push({ id: step.id, status: 'failed' });
-        return { ok: false, summary };
-      }
+      await seedStormBeforeWorkflow();
     }
 
     // 2) Команда в PTY с маркерами начала/конца + заголовок шага в терминале.

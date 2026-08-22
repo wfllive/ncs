@@ -205,14 +205,14 @@ const RaiSetupScreen = ({ onComplete, resume = false, resumeStep = null }) => {
 
       if (result.ok) {
         setPhase('done');
-        try { terminalRef.current?.writeText?.('\r\n\u2705 ' + copy.done + '\r\n'); } catch (_) {}
+        try { terminalRef.current?.writeText?.('\r\n# \u2705 ' + copy.done + '\r\n'); } catch (_) {}
         await stopBackground();
         setTimeout(onComplete, 900);
       } else {
         const failed = result.summary.find((r) => r.status === 'failed');
         setError(failed ? (stepMeta[failed.id]?.title?.ru || failed.id) : copy.errorText);
         setPhase('error');
-        try { terminalRef.current?.writeText?.('\r\n\u274c ' + copy.errorText + '\r\n'); } catch (_) {}
+        try { terminalRef.current?.writeText?.('\r\n# \u274c ' + copy.errorText + ': смотрите вывод шага выше\r\n'); } catch (_) {}
       }
     } catch (e) {
       setError(e?.message || String(e));
