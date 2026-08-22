@@ -44,26 +44,34 @@ const STORM_SRC_ZIP =
   'https://codeload.github.com/wfllive/Storm-Build/zip/refs/heads/arena/019ffc57-storm-build';
 
 /**
- * Команда установки сборщика. Источники по приоритету:
+ * Команда установки сборщика. Устойчива к «падающим» в proot бинарям:
+ * скачивание — curl → wget → python3; распаковка — unzip → python3 → busybox
+ * (на устройствах curl/unzip могут abort'иться с «stack smashing detected»).
+ *
+ * Источники по приоритету:
  *   1) бандл из APK, засеянный в /root/storm-bundle.zip (офлайн);
- *   2) тот же бандл из репозитория конструктора (если seed не сработал);
+ *   2) тот же бандл из репозитория конструктора;
  *   3) исходники Storm Build из апстрим-репозитория (codeload).
- * Дальше — штатный `install.sh`: apt-пакеты (JDK 17, python3, aapt/aapt2,
- * zipalign…), скачивание android.jar/r8/apksigner/bundletool в ~/.storm/tools,
- * лаунчер storm в PATH, `storm doctor`.
+ * Дальше — штатный `install.sh` (внутри него те же fallback-цепочки).
  */
 export const STORM_INSTALL_CMD =
+  `f_fetch() { command -v curl >/dev/null 2>&1 && curl -fsSL --retry 2 --max-time 300 -o "$2" "$1" && return 0; ` +
+  `command -v wget >/dev/null 2>&1 && wget -q -T 300 -O "$2" "$1" && return 0; ` +
+  `command -v python3 >/dev/null 2>&1 && python3 -c "import sys,urllib.request as u;u.urlretrieve(sys.argv[1],sys.argv[2])" "$1" "$2" && return 0; ` +
+  `return 1; }; ` +
+  `f_unzip() { [ -s "$1" ] || return 1; ` +
+  `command -v unzip >/dev/null 2>&1 && unzip -oq "$1" -d "$2" 2>/dev/null && return 0; ` +
+  `command -v python3 >/dev/null 2>&1 && python3 -c "import sys,zipfile as z;z.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$1" "$2" 2>/dev/null && return 0; ` +
+  `command -v busybox >/dev/null 2>&1 && busybox unzip -oq "$1" -d "$2" && return 0; ` +
+  `return 1; }; ` +
   `mkdir -p ${STORM_DIR} && cd ${STORM_DIR} && ` +
   // 1) офлайн-бандл из APK
-  `{ [ -f install.sh ] || { [ -s ${STORM_BUNDLE} ] && unzip -oq ${STORM_BUNDLE}; }; }; ` +
+  `{ [ -f install.sh ] || { [ -s ${STORM_BUNDLE} ] && f_unzip ${STORM_BUNDLE} ${STORM_DIR}; }; }; ` +
   // 2) бандл из репозитория конструктора
-  `{ [ -f install.sh ] || { command -v curl >/dev/null 2>&1 && ` +
-  `curl -fsSL --retry 3 --max-time 300 -o ${STORM_BUNDLE} ${STORM_BUNDLE_RAW} && ` +
-  `unzip -oq ${STORM_BUNDLE}; }; }; ` +
+  `{ [ -f install.sh ] || { f_fetch ${STORM_BUNDLE_RAW} ${STORM_BUNDLE} && f_unzip ${STORM_BUNDLE} ${STORM_DIR}; }; }; ` +
   // 3) исходники апстрима (Storm-Build)
-  `{ [ -f install.sh ] || { command -v curl >/dev/null 2>&1 && ` +
-  `curl -fsSL --retry 3 --max-time 300 -o /tmp/storm-src.zip ${STORM_SRC_ZIP} && ` +
-  `rm -rf /tmp/storm-src && unzip -q /tmp/storm-src.zip -d /tmp/storm-src && ` +
+  `{ [ -f install.sh ] || { f_fetch ${STORM_SRC_ZIP} /tmp/storm-src.zip && ` +
+  `rm -rf /tmp/storm-src && f_unzip /tmp/storm-src.zip /tmp/storm-src && ` +
   `rm -rf ${STORM_DIR} && mkdir -p ${STORM_DIR} && ` +
   `mv /tmp/storm-src/*/* ${STORM_DIR}/ 2>/dev/null; ` +
   `mv /tmp/storm-src/*/.gitignore ${STORM_DIR}/ 2>/dev/null; ` +
@@ -82,8 +90,8 @@ export const SETUP_STEPS = [
       'export DEBIAN_FRONTEND=noninteractive; ' +
       '(dpkg --configure -a 2>/dev/null || true); ' +
       'apt update && apt upgrade -y && ' +
-      'apt install unzip ca-certificates curl -y',
-    check: 'command -v unzip >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && [ -n "$(ls /var/lib/apt/lists/ 2>/dev/null | head -1)" ] && echo DONE || echo TODO',
+      'apt install unzip ca-certificates curl wget python3 -y',
+    check: 'command -v unzip >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 && [ -n "$(ls /var/lib/apt/lists/ 2>/dev/null | head -1)" ] && echo DONE || echo TODO',
   },
   {
     // Storm Build: бандл из APK → распаковка → штатный установщик.

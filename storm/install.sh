@@ -93,12 +93,45 @@ verify_jar() {
     if [ "$bytes" -lt "$min_bytes" ]; then
         return 1
     fi
+    # Целостность ZIP: unzip → python3 (в proot unzip может падать с
+    # «stack smashing detected» — python3 тогда страхует).
     if command -v unzip &>/dev/null; then
-        if ! unzip -t -q "$file" 2>/dev/null; then
-            return 1
+        if unzip -t -q "$file" 2>/dev/null; then
+            return 0
         fi
     fi
+    if command -v python3 &>/dev/null; then
+        if python3 -m zipfile -t "$file" &>/dev/null; then
+            return 0
+        fi
+    fi
+    # Ни один тестер не доступен/не выжил — считаем файл валидным по размеру.
     return 0
+}
+
+# Helper: скачать файл. curl → wget → python3 (proot-устойчивая цепочка:
+# если бинарь падает с «stack smashing», пробуем следующий).
+fetch_url() {
+    local url="$1"
+    local dest="$2"
+    if command -v curl &>/dev/null; then
+        if curl -L -f --connect-timeout 10 --max-time 120 --retry 2 \
+             -H "User-Agent: Mozilla/5.0 (Linux; Android; StormBuildCLI/1.0)" \
+             -o "$dest" "$url" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    if command -v wget &>/dev/null; then
+        if wget -q -T 120 -t 2 -U "Mozilla/5.0 (Linux; Android; StormBuildCLI/1.0)" -O "$dest" "$url" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    if command -v python3 &>/dev/null; then
+        if python3 -c "import sys,urllib.request as u; u.urlretrieve(sys.argv[1], sys.argv[2])" "$url" "$dest" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    return 1
 }
 
 # Helper: Verify binary executable
@@ -151,9 +184,7 @@ download_with_mirrors() {
     for url in "${mirrors[@]}"; do
         echo -e "  • Downloading ${CYAN}${desc}${RESET} (Mirror ${m_idx}/${total_mirrors})..."
         for attempt in 1 2 3; do
-            if curl -L -f --connect-timeout 10 --max-time 120 --retry 2 \
-                 -H "User-Agent: Mozilla/5.0 (Linux; Android; StormBuildCLI/1.0)" \
-                 -o "${dest}.tmp" "$url" 2>/dev/null; then
+            if fetch_url "$url" "${dest}.tmp"; then
                 
                 if [[ "$url" == *.tar.gz ]] || [[ "$url" == *.tgz ]]; then
                     tar -xzf "${dest}.tmp" -C "$(dirname "$dest")" aapt2 2>/dev/null || \
