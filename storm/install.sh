@@ -44,6 +44,14 @@ fi
 
 # 2. Install System Packages if in Termux or Debian/Ubuntu
 echo -e "\n${BOLD}[2/5] Checking and Installing System Packages...${RESET}"
+# В proot debconf иногда ломается («Syntax error "(" unexpected») и валит
+# postinst'ы python3/ca-certificates при уже распакованных файлах.
+# Глушим его заглушкой — среде сборки диалоги не нужны.
+if [ -f /usr/share/debconf/frontend ] && ! head -1 /usr/share/debconf/frontend | grep -q "exit 0"; then
+    cp -a /usr/share/debconf/frontend /usr/share/debconf/frontend.bak 2>/dev/null || true
+    printf '#!/bin/sh\nexit 0\n' > /usr/share/debconf/frontend 2>/dev/null || true
+    echo "  -> debconf: заглушка для proot"
+fi
 if [ "$IS_TERMUX" = true ]; then
     echo "  -> Updating Termux packages and installing dependencies..."
     pkg update -y || true
@@ -52,11 +60,17 @@ elif command -v apt-get &>/dev/null; then
     echo "  -> Detected Debian/Ubuntu/Linux with apt-get..."
     if [ "$EUID" -eq 0 ]; then
         apt-get update -y || true
-        apt-get install -y python3 python3-pip openjdk-17-jdk-headless aapt zipalign zip unzip curl tar || true
+        apt-get install -y python3 python3-pip openjdk-17-jdk-headless aapt zipalign zip unzip curl wget tar || true
     else
         sudo apt-get update -y || true
-        sudo apt-get install -y python3 python3-pip openjdk-17-jdk-headless aapt zipalign zip unzip curl tar || true
+        sudo apt-get install -y python3 python3-pip openjdk-17-jdk-headless aapt zipalign zip unzip curl wget tar || true
     fi
+    # postinst мог не дойти (битый debconf в proot) — чиним ссылку вручную
+    if [ ! -x /usr/bin/python3 ]; then
+        P312="$(ls /usr/bin/python3.* 2>/dev/null | head -1)"
+        [ -n "$P312" ] && ln -sf "$P312" /usr/bin/python3 && echo "  -> python3: ссылка восстановлена"
+    fi
+    (dpkg --configure -a 2>/dev/null || true)
 elif command -v brew &>/dev/null; then
     echo "  -> Detected macOS with Homebrew."
     brew install openjdk android-commandlinetools || true

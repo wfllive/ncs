@@ -55,13 +55,14 @@ const STORM_SRC_ZIP =
  * Дальше — штатный `install.sh` (внутри него те же fallback-цепочки).
  */
 export const STORM_INSTALL_CMD =
+  `PY="$(command -v python3 2>/dev/null || command -v python3.12 2>/dev/null || true)"; ` +
   `f_fetch() { command -v curl >/dev/null 2>&1 && curl -fsSL --retry 2 --max-time 300 -o "$2" "$1" && return 0; ` +
   `command -v wget >/dev/null 2>&1 && wget -q -T 300 -O "$2" "$1" && return 0; ` +
-  `command -v python3 >/dev/null 2>&1 && python3 -c "import sys,urllib.request as u;u.urlretrieve(sys.argv[1],sys.argv[2])" "$1" "$2" && return 0; ` +
+  `[ -n "$PY" ] && "$PY" -c "import sys,urllib.request as u;u.urlretrieve(sys.argv[1],sys.argv[2])" "$1" "$2" && return 0; ` +
   `return 1; }; ` +
   `f_unzip() { [ -s "$1" ] || return 1; ` +
   `command -v unzip >/dev/null 2>&1 && unzip -oq "$1" -d "$2" 2>/dev/null && return 0; ` +
-  `command -v python3 >/dev/null 2>&1 && python3 -c "import sys,zipfile as z;z.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$1" "$2" 2>/dev/null && return 0; ` +
+  `[ -n "$PY" ] && "$PY" -c "import sys,zipfile as z;z.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$1" "$2" 2>/dev/null && return 0; ` +
   `command -v busybox >/dev/null 2>&1 && busybox unzip -oq "$1" -d "$2" && return 0; ` +
   `return 1; }; ` +
   `mkdir -p ${STORM_DIR} && cd ${STORM_DIR} && ` +
@@ -83,15 +84,31 @@ export const STORM_INSTALL_CMD =
 export const SETUP_STEPS = [
   {
     // Минимум для распаковки бандла и работы установщика (остальные пакеты —
-    // JDK, aapt2, zipalign и т.д. — поставит сам install.sh).
+    // JDK 17, aapt2, zipalign и т.д. — поставит сам install.sh).
+    //
+    // ВАЖНО про proot: на некоторых устройствах debconf ломается
+    // («/usr/share/debconf/frontend: 9: Syntax error "(" unexpected»), из-за
+    // чего postinst'ы tzdata/python3/ca-certificates падают и apt возвращает
+    // ошибку, ХОТЯ файлы распакованы. Поэтому:
+    //   1) глушим debconf заглушкой (среда сборочная, диалоги не нужны);
+    //   2) ошибки apt/dpkg не считаем фатальными (|| true);
+    //   3) в конце явно проверяем бинари и чиним ссылку /usr/bin/python3
+    //      (альтернативы настраиваются в postinst, который мог не дойти).
     id: 'apt',
     title: { ru: 'apt update + unzip', en: 'apt update + unzip' },
     cmd:
       'export DEBIAN_FRONTEND=noninteractive; ' +
       '(dpkg --configure -a 2>/dev/null || true); ' +
-      'apt update && apt upgrade -y && ' +
-      'apt install unzip ca-certificates curl wget python3 -y',
-    check: 'command -v unzip >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 && [ -n "$(ls /var/lib/apt/lists/ 2>/dev/null | head -1)" ] && echo DONE || echo TODO',
+      '{ [ -f /usr/share/debconf/frontend ] && ! head -1 /usr/share/debconf/frontend | grep -q "exit 0" && ' +
+      '{ cp -a /usr/share/debconf/frontend /usr/share/debconf/frontend.bak 2>/dev/null || true; ' +
+      'printf \'#!/bin/sh\\nexit 0\\n\' > /usr/share/debconf/frontend; echo "debconf: заглушка для proot"; }; } || true; ' +
+      'apt update || true; ' +
+      'apt upgrade -y || true; ' +
+      'apt install -y unzip ca-certificates curl wget python3 || true; ' +
+      '(dpkg --configure -a 2>/dev/null || true); ' +
+      '{ [ -x /usr/bin/python3 ] || { P312="$(ls /usr/bin/python3.* 2>/dev/null | head -1)"; [ -n "$P312" ] && ln -sf "$P312" /usr/bin/python3 && echo "python3: ссылка восстановлена"; }; } || true; ' +
+      'command -v unzip >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 && echo APT_STEP_OK',
+    check: 'command -v unzip >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 && [ -n "$(ls /var/lib/apt/lists/ 2>/dev/null | head -1)" ] && echo DONE || echo TODO',
   },
   {
     // Storm Build: бандл из APK → распаковка → штатный установщик.
