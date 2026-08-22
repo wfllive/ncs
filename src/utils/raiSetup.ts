@@ -56,6 +56,7 @@ const STORM_SRC_ZIP =
  */
 export const STORM_INSTALL_CMD =
   `PY="$(command -v python3 2>/dev/null || command -v python3.12 2>/dev/null || true)"; ` +
+  `f_iszip() { [ -s "$1" ] && head -c 2 "$1" 2>/dev/null | grep -q "PK"; }; ` +
   `f_fetch() { command -v curl >/dev/null 2>&1 && curl -fsSL --retry 2 --max-time 300 -o "$2" "$1" && return 0; ` +
   `command -v wget >/dev/null 2>&1 && wget -q -T 300 -O "$2" "$1" && return 0; ` +
   `[ -n "$PY" ] && "$PY" -c "import sys,urllib.request as u;u.urlretrieve(sys.argv[1],sys.argv[2])" "$1" "$2" && return 0; ` +
@@ -69,19 +70,26 @@ export const STORM_INSTALL_CMD =
   `[ -n "$PY" ] && "$PY" -c "import sys,zipfile as z;z.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$1" "$2" 2>/dev/null && return 0; ` +
   `command -v busybox >/dev/null 2>&1 && busybox unzip -oq "$1" -d "$2" && return 0; ` +
   `return 1; }; ` +
+  `echo "[storm] bundle в rootfs: $(stat -c %s ${STORM_BUNDLE} 2>/dev/null || echo 0) байт"; ` +
   `mkdir -p ${STORM_DIR} && cd ${STORM_DIR} && ` +
+  // битый (не-zip) бандл удаляем, чтобы не жевать его по кругу
+  `{ [ -e ${STORM_BUNDLE} ] && ! f_iszip ${STORM_BUNDLE} && { echo "[storm] bundle повреждён (не zip) — удаляю"; rm -f ${STORM_BUNDLE}; }; }; ` +
   // 1) офлайн-бандл из APK
-  `{ [ -f install.sh ] || { [ -s ${STORM_BUNDLE} ] && f_unzip ${STORM_BUNDLE} ${STORM_DIR}; }; }; ` +
+  `{ [ -f install.sh ] || { f_iszip ${STORM_BUNDLE} && f_unzip ${STORM_BUNDLE} ${STORM_DIR} && echo "[storm] распаковано из: бандл APK"; }; }; ` +
   // 2) бандл из репозитория конструктора
-  `{ [ -f install.sh ] || { f_fetch ${STORM_BUNDLE_RAW} ${STORM_BUNDLE} && f_unzip ${STORM_BUNDLE} ${STORM_DIR}; }; }; ` +
+  `{ [ -f install.sh ] || { f_fetch ${STORM_BUNDLE_RAW} ${STORM_BUNDLE} && f_iszip ${STORM_BUNDLE} && f_unzip ${STORM_BUNDLE} ${STORM_DIR} && echo "[storm] распаковано из: ncs-raw"; }; }; ` +
+  `{ [ -f install.sh ] || { [ -e ${STORM_BUNDLE} ] && ! f_iszip ${STORM_BUNDLE} && { echo "[storm] скачанный файл — не zip (портал/MITM?) — удаляю"; rm -f ${STORM_BUNDLE}; }; }; }; ` +
   // 3) исходники апстрима (Storm-Build)
-  `{ [ -f install.sh ] || { f_fetch ${STORM_SRC_ZIP} /tmp/storm-src.zip && ` +
-  `rm -rf /tmp/storm-src && f_unzip /tmp/storm-src.zip /tmp/storm-src && ` +
+  `{ [ -f install.sh ] || { f_fetch ${STORM_SRC_ZIP} /tmp/storm-src.zip && f_iszip /tmp/storm-src.zip && ` +
+  `{ rm -rf /tmp/storm-src && f_unzip /tmp/storm-src.zip /tmp/storm-src && ` +
   `rm -rf ${STORM_DIR} && mkdir -p ${STORM_DIR} && ` +
   `mv /tmp/storm-src/*/* ${STORM_DIR}/ 2>/dev/null; ` +
   `mv /tmp/storm-src/*/.gitignore ${STORM_DIR}/ 2>/dev/null; ` +
-  `rm -rf /tmp/storm-src /tmp/storm-src.zip; }; }; ` +
-  `[ -f install.sh ] || { echo "STORM_FAIL: install.sh не найден — бандла нет в APK и зеркала недоступны"; exit 1; }; ` +
+  // cwd мог указывать на удалённую директорию — возвращаемся в живую
+  `cd ${STORM_DIR} && ` +
+  `echo "[storm] распаковано из: upstream"; rm -rf /tmp/storm-src /tmp/storm-src.zip; }; }; }; ` +
+  `[ -f install.sh ] || { echo "STORM_FAIL: install.sh не найден — бандла нет в APK и зеркала недоступны"; ` +
+  `echo "[storm] диагностика: bundle=$(stat -c %s ${STORM_BUNDLE} 2>/dev/null || echo отсутствует) unzip=$(command -v unzip || echo нет) py=$PY"; exit 1; }; ` +
   `chmod +x install.sh storm 2>/dev/null; ` +
   `bash install.sh`;
 
